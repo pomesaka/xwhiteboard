@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>xwb</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main id="stage">
+      <div id="world">
+        <div id="els"></div>
+        <svg id="lines" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="claims"></div>
+        <div id="handle" class="handle" hidden></div>
+      </div>
+      <div id="marquee" hidden></div>
+    </main>
+    <header id="top">
+      <span id="conn"></span>
+      <div id="title"></div>
+    </header>
+    <div id="view">
+      <button id="resolved" title="解決済みのコメントを表示" hidden></button>
+      <button id="undo" title="元に戻す（⌘Z）">戻す</button>
+      <button id="zoomout" title="縮小">−</button>
+      <span id="zoom">100%</span>
+      <button id="zoomin" title="拡大">＋</button>
+      <button id="fit" title="全体を表示">全体</button>
+      <button id="png" title="ボード全体を PNG で保存">PNG</button>
+    </div>
+    <nav id="tools">
+      <button data-tool="select" title="選択（V）">選択</button>
+      <button data-tool="note" title="付箋（N）">付箋</button>
+      <button data-tool="shape" title="図形（R）">図形</button>
+      <button data-tool="text" title="文字（T）">文字</button>
+      <button data-tool="container" title="セクション（S）">枠</button>
+      <button data-tool="table" title="表">表</button>
+      <button data-tool="arrow" title="矢印（A）">矢印</button>
+      <button data-tool="pen" title="ペン（P）">ペン</button>
+      <button data-tool="comment" title="コメント（C）。ドラッグで範囲、クリックで 1 点">コメント</button>
+    </nav>
+    <div id="bar" hidden></div>
+    <div id="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

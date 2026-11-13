@@ -1,0 +1,1052 @@
+:root {
+  --paper: #f6f3ec;
+  --dot: #d6cfbf;
+  --ink: #2b2a28;
+  --sel: #2f6fed;
+  --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font);
+  overscroll-behavior: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+#stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.4px);
+  cursor: default;
+}
+#stage.tool-add {
+  cursor: crosshair;
+}
+#stage.panning {
+  cursor: grabbing;
+}
+
+#world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+#lines {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* ---- 色。--bg は面、--bd は縁、--ink は線と文字 ---- */
+.c-yellow { --bg: #fff1a8; --bd: #e2c343; --ink: #8a6d00; }
+.c-orange { --bg: #ffd9b0; --bd: #e9a45c; --ink: #a85a10; }
+.c-red { --bg: #ffc9c4; --bd: #e2766c; --ink: #b3261e; }
+.c-pink { --bg: #ffd0e4; --bd: #e58bb4; --ink: #b02a6b; }
+.c-purple { --bg: #e2d6ff; --bd: #a48be6; --ink: #5b3cc4; }
+.c-blue { --bg: #cfe3ff; --bd: #7aa7e8; --ink: #1f5fbf; }
+.c-teal { --bg: #c5efe9; --bd: #5fbcae; --ink: #0f7a6c; }
+.c-green { --bg: #d3f0c8; --bd: #7fc068; --ink: #2f7d1c; }
+.c-gray { --bg: #e9e6df; --bd: #b4aea2; --ink: #6b665c; }
+.c-white { --bg: #ffffff; --bd: #c4bdaf; --ink: #2b2a28; }
+.c-ink { --bg: #2b2a28; --bd: #2b2a28; --ink: #2b2a28; }
+
+/* ---- 要素 ---- */
+.el {
+  position: absolute;
+  z-index: 2;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.el.sel {
+  outline: 2px solid var(--sel);
+  outline-offset: 3px;
+}
+/* 固定した要素を選んだときは、枠を点線にする */
+.el.locked.sel {
+  outline-style: dashed;
+}
+.el [contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+  outline: none;
+  cursor: text;
+}
+
+.shape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1.5px solid var(--bd);
+  color: #2b2a28;
+  overflow: hidden;
+}
+.shape.c-ink {
+  color: #fff;
+}
+.shape .body {
+  max-width: 100%;
+  min-width: 1em;
+  text-align: center;
+}
+.shape .txt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  min-height: 1.4em;
+  min-width: 1em;
+}
+.shape .tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shape.c-ink .tag {
+  color: #d6cfbf;
+}
+.s-note {
+  border: 0;
+  border-radius: 2px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 6px 12px -6px rgba(60, 50, 20, 0.35);
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.s-note .body {
+  text-align: left;
+  width: 100%;
+}
+.s-round {
+  border-radius: 16px;
+}
+.s-ellipse {
+  border-radius: 50%;
+  padding: 12% 14%;
+}
+.s-pill {
+  border-radius: 999px;
+  padding: 10px 20px;
+}
+/* SVG で輪郭を描く形（main.ts の shapeOutline）。箱そのものの面と縁は消す */
+.shape.drawn {
+  background: none;
+  border: 0;
+  overflow: visible;
+}
+.shape .shp {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.shape .shp path {
+  stroke: var(--bd);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+}
+.shape .shp .fill {
+  fill: var(--bg);
+}
+.shape .shp .line {
+  fill: none;
+}
+.shape.drawn .body {
+  position: relative;
+}
+.s-diamond {
+  padding: 18% 20%;
+}
+.s-hexagon,
+.s-parallelogram {
+  padding: 10px 18%;
+}
+.s-cylinder {
+  padding: 26px 12px 12px;
+}
+.s-document {
+  padding: 10px 12px 20px;
+}
+.s-queue {
+  padding: 10px 26px 10px 16px;
+}
+.s-cloud {
+  padding: 20% 16% 14%;
+}
+
+/* 枠線の色（border）。面の色（color）とは別に、線の濃い色を使う */
+.b-yellow { --bd: #8a6d00; }
+.b-orange { --bd: #a85a10; }
+.b-red { --bd: #b3261e; }
+.b-pink { --bd: #b02a6b; }
+.b-purple { --bd: #5b3cc4; }
+.b-blue { --bd: #1f5fbf; }
+.b-teal { --bd: #0f7a6c; }
+.b-green { --bd: #2f7d1c; }
+.b-gray { --bd: #6b665c; }
+.b-white { --bd: #ffffff; }
+.b-ink { --bd: #2b2a28; }
+
+/* 中を塗らない */
+.shape.hollow {
+  background: none;
+  box-shadow: none;
+}
+.shape.hollow .shp .fill {
+  fill: none;
+}
+.shape.c-ink.hollow {
+  color: #2b2a28;
+}
+/* 点線の枠 */
+.shape.dashed {
+  border-style: dashed;
+}
+.shape.dashed .shp path {
+  stroke-dasharray: 6 5;
+}
+/* 付箋には枠が無い。枠線の見た目を指定されたときだけ枠を出す */
+.s-note.bordered,
+.s-note.hollow,
+.s-note.dashed {
+  border: 1.5px solid var(--bd);
+  box-shadow: none;
+}
+.s-note.dashed {
+  border-style: dashed;
+}
+
+.container {
+  z-index: 1;
+  border: 1.5px solid var(--bd);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 38%, transparent);
+  /* 中の空いた場所は背景として扱う（範囲選択を始められるように）。つかめるのは題名だけ */
+  pointer-events: none;
+}
+.container .ttl {
+  pointer-events: auto;
+  position: absolute;
+  left: 14px;
+  top: 10px;
+  max-width: calc(100% - 28px);
+  min-width: 3em;
+  min-height: 1.5em;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--bd);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+}
+.container.c-white .ttl,
+.container.c-gray .ttl {
+  background: #6b665c;
+}
+
+.text {
+  color: var(--ink);
+  line-height: 1.45;
+}
+.text .txt {
+  white-space: pre;
+  min-width: 1em;
+  min-height: 1.45em;
+}
+.text.wrap .txt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sz-s { font-size: 12px; }
+.sz-m { font-size: 16px; }
+.sz-l { font-size: 24px; font-weight: 600; }
+.sz-xl { font-size: 40px; font-weight: 700; letter-spacing: 0.01em; }
+.sz-huge { font-size: 96px; font-weight: 800; letter-spacing: 0.01em; }
+
+/* 文字の寄せ（align）。書いたときだけ、既定（文字と付箋は左、ほかの図形は中央）を上書きする。
+   図形は、文字の入る場所を箱の幅いっぱいに広げてから寄せる */
+.el.al-left .txt { text-align: left; }
+.el.al-center .txt { text-align: center; }
+.el.al-right .txt { text-align: right; }
+.shape.al-left .body,
+.shape.al-center .body,
+.shape.al-right .body {
+  width: 100%;
+}
+.shape.al-left .tag { text-align: left; }
+.shape.al-center .tag { text-align: center; }
+.shape.al-right .tag { text-align: right; }
+
+.table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: #fff;
+  font-size: 13px;
+  line-height: 19px;
+}
+.table th,
+.table td {
+  border: 1px solid #c4bdaf;
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  height: 34px;
+}
+.table th {
+  background: #ece8de;
+  font-weight: 700;
+}
+
+.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+}
+
+/* ---- ガントチャート。中の部品の位置と大きさは、shared/gantt.ts の配置で決めて main.ts が入れる ---- */
+.gantt {
+  background: #fff;
+  border: 1.5px solid #c4bdaf;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #2b2a28;
+}
+.gantt > div {
+  position: absolute;
+}
+.gtitle {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ggroup {
+  padding-left: 4px;
+  line-height: 16px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #9a948a;
+  white-space: nowrap;
+  overflow: hidden;
+  border-left: 1px solid #c4bdaf;
+}
+/* WHY flex の右寄せ: 入りきらない文字を、右ではなく左へはみ出させる（右には次の年の見出しがある） */
+.ggroup.narrow {
+  display: flex;
+  justify-content: flex-end;
+  overflow: visible;
+  padding: 0 3px 0 0;
+  border-left: 0;
+  border-right: 1px solid #c4bdaf;
+}
+.gtick {
+  line-height: 20px;
+  text-align: center;
+  font-weight: 600;
+  color: #6b665c;
+  white-space: nowrap;
+  overflow: hidden;
+  border-bottom: 1px solid #c4bdaf;
+}
+.gline {
+  border-left: 1px solid #e4dfd3;
+}
+.grow {
+  border-bottom: 1px solid #eeeae0;
+}
+.gname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 4px;
+  font-weight: 600;
+}
+.gname .gn {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 行の札（担当など）。名前の右に出す */
+.gname .gtag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #2b2a28;
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.grow.tagged {
+  background: rgba(255, 214, 10, 0.16);
+}
+/* まとまりの見出し */
+.ggrp {
+  padding-left: 4px;
+  line-height: 26px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #6b665c;
+  background: #f3f0e8;
+  border-bottom: 1px solid #c4bdaf;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.gbar {
+  border-radius: 6px;
+  background: var(--bd);
+  cursor: grab;
+}
+/* 状態。これからの行は枠だけ、済んだ行は薄く */
+.gbar.st-planned {
+  background: color-mix(in srgb, var(--bg) 60%, #fff);
+  border: 1.5px dashed var(--bd);
+}
+.gbar.st-done {
+  background: color-mix(in srgb, var(--bd) 45%, #fff);
+}
+.gedge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+.gedge.start {
+  left: 0;
+}
+.gedge.end {
+  right: 0;
+}
+.gmline {
+  border-left: 1.5px dashed #b3261e;
+}
+.gmark {
+  padding-left: 12px;
+  line-height: 26px;
+  font-weight: 700;
+  color: #b3261e;
+  white-space: nowrap;
+}
+/* マイルストーンの印（ひし形）。日付の線の真下に置く */
+.gmark::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 8px;
+  width: 9px;
+  height: 9px;
+  background: #b3261e;
+  transform: rotate(45deg);
+}
+.gtoday {
+  border-left: 2px solid #1f5fbf;
+}
+/* 「今日」の札。マイルストーンと同じ段に置き、色と印の形（丸）で見分ける */
+.gmark.today {
+  color: #1f5fbf;
+}
+.gmark.today::before {
+  background: #1f5fbf;
+  border-radius: 50%;
+  transform: none;
+}
+.gmark.left {
+  padding: 0 12px 0 0;
+  transform: translateX(-100%);
+}
+.gmark.left::before {
+  left: auto;
+  right: -5px;
+}
+
+.image.cropped {
+  overflow: hidden;
+}
+.image.cropped img {
+  object-fit: cover;
+}
+/* 画像に付けたリンク。画像そのものを押すと選ぶ操作になるので、開く場所を角の印に分ける */
+.el.image .ilink {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(43, 42, 40, 0.82);
+  color: #fff;
+  font-size: 14px;
+  line-height: 24px;
+  text-align: center;
+  text-decoration: none;
+}
+
+/* ---- 文字の装飾（付箋・図形・文字・表のセル） ---- */
+.el ul,
+.el ol {
+  margin: 0;
+  padding-left: 1.4em;
+  text-align: left;
+  /* 親の pre-wrap のままだと、項目の間に余分な空行が出る */
+  white-space: normal;
+}
+.el li {
+  white-space: pre-wrap;
+}
+.el code {
+  padding: 0.05em 0.3em;
+  border-radius: 4px;
+  background: rgba(40, 30, 10, 0.1);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.9em;
+}
+/* 蛍光ペン。文字の下半分に帯を引く。
+   WHY 下半分だけ・濃い色: 付箋の地の色（黄・緑・青など）の上でも、帯が見えるようにする。文字の色は変えない */
+.el mark {
+  /* WHY ここで --hl を決めない: 色の指定（.hl-pink など）より、この行のほうが優先されて、全部が黄色になる */
+  padding: 0.05em 0.18em;
+  border-radius: 3px;
+  background: var(--hl, #ffee58);
+  color: inherit;
+  /* 文字の高さいっぱいの、不透明な淡い帯。
+     WHY 下半分だけの濃い帯にしない: 帯の上の端が文字の真ん中を横切って、取り消し線のように見える。
+     WHY 地の色と混ぜない（半透明や掛け合わせにしない）: 付箋の色しだいで帯の色が変わると、書いた色と出る色が違ってしまう。
+     地と近い色で見分けにくい組み合わせは、色を直さずに、見た目の検査（highlight-contrast）で知らせる */
+  /* 行をまたいだとき、行ごとに角の丸みと余白を付ける */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+/* 濃い箱では文字が白いので、帯の上の文字だけ濃い色にする */
+.shape.c-ink mark {
+  color: #2b2a28;
+}
+/* 帯の色。shared/colors.ts の HIGHLIGHT と同じ値にする（見た目の検査が、地の色との近さを測るのに使う） */
+.hl-yellow { --hl: #ffee58; }
+.hl-green { --hl: #a8efb4; }
+.hl-blue { --hl: #a9d6ff; }
+.hl-pink { --hl: #ffb3d4; }
+.hl-orange { --hl: #ffc680; }
+/* 編集中のバーの、蛍光ペンの色のボタン */
+#bar .sw[class*="hl-"] {
+  background: var(--hl);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+.el a {
+  color: #1f5fbf;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.shape.c-ink code {
+  background: rgba(255, 255, 255, 0.2);
+}
+.shape.c-ink a {
+  color: #a9c8ff;
+}
+
+/* ---- コメント ----
+   ボードの中身ではなく、ボードについてのやりとり。中身の上に重ねて出す */
+.comment {
+  --c: #e8590c;
+  z-index: 6;
+  pointer-events: none;
+}
+.comment.open {
+  z-index: 9;
+}
+/* 範囲のコメントは中身の上に重なるので、書き込みを知らせる光で中身を覆わない。返事は印の色で知らせる */
+.comment.flash {
+  animation: none;
+}
+.comment.resolved {
+  --c: #9a948a;
+  /* 片付いたコメントは、ボードに溜めない。右上の「解決済み」を押したときだけ見せる */
+  display: none;
+}
+body.show-resolved .comment.resolved {
+  display: block;
+}
+.comment .carea {
+  display: none;
+  position: absolute;
+  inset: 0;
+  border: 2px dashed var(--c);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--c) 7%, transparent);
+}
+.comment.area .carea {
+  display: block;
+}
+.comment.resolved .carea {
+  border-width: 1px;
+  background: none;
+}
+.comment .cpin {
+  pointer-events: auto;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  /* 吹き出しの形。左下の角が、指している点 */
+  border-radius: 50% 50% 50% 4px;
+  background: var(--c);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 28px;
+  text-align: center;
+  box-shadow: 0 3px 8px -2px rgba(40, 20, 0, 0.5);
+  cursor: pointer;
+  transform-origin: 0 100%;
+  transform: translate(0, -100%) scale(var(--inv, 1));
+}
+.comment.area .cpin {
+  left: 100%;
+}
+.comment.resolved .cpin {
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  font-size: 11px;
+  box-shadow: none;
+}
+@keyframes unread {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sel) 80%, transparent); }
+  50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--sel) 0%, transparent); }
+}
+.comment.unread .cpin {
+  background: var(--sel);
+  animation: unread 1.4s ease-out infinite;
+}
+.cpanel {
+  pointer-events: auto;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 320px;
+  margin-left: calc(38px * var(--inv, 1));
+  padding: 10px;
+  border-radius: 10px;
+  background: #fff;
+  color: #2b2a28;
+  box-shadow: 0 0 0 1px rgba(40, 30, 10, 0.12), 0 14px 34px -10px rgba(40, 30, 10, 0.45);
+  font-size: 13px;
+  transform-origin: 0 0;
+  transform: translate(0, calc(-28px * var(--inv, 1))) scale(var(--inv, 1));
+  user-select: text;
+  -webkit-user-select: text;
+}
+.comment.area .cpanel {
+  left: 100%;
+}
+.cmsgs {
+  max-height: 280px;
+  overflow-y: auto;
+  /* 端まで来たスクロールを、外（ボード）へ渡さない */
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cmsgs:not(:empty) {
+  margin-bottom: 10px;
+}
+.cmsg {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f3f0e8;
+}
+.cmsg.by-claude {
+  background: color-mix(in srgb, var(--sel) 10%, #fff);
+}
+.cwho {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b665c;
+  margin-bottom: 2px;
+}
+.ctext {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+/* やりとりの末尾に出す状態。返事待ちは点が動き、送れていないものは赤 */
+.cstate {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b665c;
+}
+.cstate.unsent {
+  color: #b3261e;
+}
+@keyframes waiting {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75%, 100% { content: "..."; }
+}
+.cstate.wait::after {
+  content: "";
+  animation: waiting 1.6s steps(1) infinite;
+}
+.crow button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.cinput {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #c4bdaf;
+  border-radius: 8px;
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  overscroll-behavior: contain;
+}
+.cinput:focus {
+  border-color: var(--sel);
+}
+.crow {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.crow button {
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.crow button:first-child {
+  background: var(--ink);
+  color: #fff;
+  font-weight: 700;
+}
+.crow button:last-child {
+  color: #6b665c;
+}
+.crow button:last-child:hover {
+  background: #f3f0e8;
+}
+body.export .comment {
+  display: none;
+}
+body.export.with-comments .comment {
+  display: block;
+}
+/* スクショにコメントを出すときも、解決済みは出さない */
+body.export.with-comments .comment.resolved {
+  display: none;
+}
+
+/* ---- 線 ---- */
+#lines g {
+  pointer-events: none;
+}
+#lines .vis {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#lines .dashed .vis {
+  stroke-dasharray: 7 6;
+}
+#lines .hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+#lines .sel .hit {
+  stroke: color-mix(in srgb, var(--sel) 28%, transparent);
+}
+#lines .head {
+  fill: var(--ink);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+#lines text {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--ink);
+  text-anchor: middle;
+  dominant-baseline: central;
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+#lines .preview {
+  fill: none;
+  stroke: var(--sel);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+
+/* ---- エージェントの書き込みを知らせる ---- */
+@keyframes flash {
+  0% { box-shadow: 0 0 0 0 rgba(47, 111, 237, 0.9), 0 0 0 0 rgba(47, 111, 237, 0.35); }
+  30% { box-shadow: 0 0 0 4px rgba(47, 111, 237, 0.9), 0 0 0 16px rgba(47, 111, 237, 0.25); }
+  100% { box-shadow: 0 0 0 4px rgba(47, 111, 237, 0), 0 0 0 16px rgba(47, 111, 237, 0); }
+}
+.el.flash {
+  animation: flash 1.8s ease-out;
+}
+@keyframes flash-line {
+  0%, 60% { filter: drop-shadow(0 0 5px rgba(47, 111, 237, 0.95)); }
+  100% { filter: none; }
+}
+#lines g.flash {
+  animation: flash-line 1.8s ease-out;
+}
+
+#claims {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+@keyframes claim {
+  to { background-position: 28px 0, -28px 100%, 0 -28px, 100% 28px; }
+}
+.claim {
+  position: absolute;
+  border-radius: 6px;
+  background:
+    linear-gradient(90deg, var(--sel) 50%, transparent 0) repeat-x 0 0 / 14px 2px,
+    linear-gradient(90deg, var(--sel) 50%, transparent 0) repeat-x 0 100% / 14px 2px,
+    linear-gradient(0deg, var(--sel) 50%, transparent 0) repeat-y 0 0 / 2px 14px,
+    linear-gradient(0deg, var(--sel) 50%, transparent 0) repeat-y 100% 0 / 2px 14px;
+  animation: claim 1s linear infinite;
+}
+.claim span {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--sel);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.handle {
+  position: absolute;
+  z-index: 5;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2px solid var(--sel);
+  border-radius: 3px;
+  background: #fff;
+  cursor: nwse-resize;
+}
+
+#marquee {
+  position: absolute;
+  border: 1px solid var(--sel);
+  background: color-mix(in srgb, var(--sel) 10%, transparent);
+  pointer-events: none;
+}
+
+/* ---- 操作の部品 ---- */
+#top,
+#view,
+#tools,
+#bar {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  background: var(--ink);
+  color: #f6f3ec;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px -10px rgba(30, 25, 10, 0.6);
+  font-size: 13px;
+}
+#top {
+  left: 14px;
+  top: 14px;
+  gap: 10px;
+  padding: 8px 14px 8px 12px;
+  max-width: 46vw;
+}
+#title {
+  font-weight: 700;
+  font-size: 14px;
+  min-width: 4em;
+  min-height: 1.4em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  outline: none;
+}
+#conn {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e2766c;
+}
+#conn.on {
+  background: #7fc068;
+}
+#view {
+  right: 14px;
+  top: 14px;
+  padding: 4px;
+  gap: 2px;
+}
+#zoom {
+  width: 3.4em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+#tools {
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column;
+  padding: 4px;
+  gap: 2px;
+}
+#bar {
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  padding: 4px 6px;
+  gap: 4px;
+}
+#bar[hidden],
+#toast[hidden] {
+  display: none;
+}
+#view button,
+#tools button,
+#bar button {
+  padding: 7px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+#view button:hover,
+#tools button:hover,
+#bar button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+#view button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#view button.on,
+#tools button.on,
+#bar button.on {
+  background: #f6f3ec;
+  color: var(--ink);
+}
+#bar .sw {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--bd);
+}
+#bar .sw.c-ink {
+  border-color: #8a857b;
+}
+#bar .sw:hover {
+  background: var(--bg);
+  transform: scale(1.2);
+}
+#bar select {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font: inherit;
+}
+#bar .sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+#toast {
+  position: fixed;
+  z-index: 20;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: 70vw;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #b3261e;
+  color: #fff;
+  font-size: 13px;
+}
+
+/* 書き出しの画面には、操作の部品と格子を出さない */
+body.export #top,
+body.export #view,
+body.export #tools,
+body.export #bar {
+  display: none;
+}
+body.export #stage {
+  background-image: none;
+}

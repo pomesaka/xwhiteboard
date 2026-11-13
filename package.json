@@ -1,0 +1,20 @@
+{
+  "name": "xwhiteboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "xwb": "bin/xwb"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}

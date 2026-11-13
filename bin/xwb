@@ -1,0 +1,11 @@
+#!/bin/sh
+# シンボリックリンク越しに呼ばれても、リポジトリの src/cli.ts を見つける
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+exec bun "$(cd "$(dirname "$self")/.." && pwd)/src/cli.ts" "$@"
