@@ -1,0 +1,97 @@
+/* xwb が足す役割の値。ボードの中身（付箋・図形・表・ガント・コメント・蛍光ペン）の色と文字の大きさ。
+ * ui-design の共通契約には入れない、このプロダクトの業務の色（付箋の色は、書く人が意味を持たせて選ぶ）。
+ * 値はここだけに書き、board.css は名前で参照する。
+ *
+ * 付箋の面の色（--note-*）と蛍光ペンの色（--highlight-*）は、shared/colors.ts にも同じ値がある。
+ * サーバーの見た目の検査（xwb check）が、色の近さを計算するのに使うため。
+ * 2 つがずれないことは、test/colors.test.ts が確かめる。 */
+[data-theme="xwb"] {
+  /* 付箋と図形の色。面（無印）、縁（-border）、線と文字（-ink） */
+  --note-yellow: #fff1a8;
+  --note-yellow-border: #e2c343;
+  --note-yellow-ink: #8a6d00;
+  --note-orange: #ffd9b0;
+  --note-orange-border: #e9a45c;
+  --note-orange-ink: #a85a10;
+  --note-red: #ffc9c4;
+  --note-red-border: #e2766c;
+  --note-red-ink: #b3261e;
+  --note-pink: #ffd0e4;
+  --note-pink-border: #e58bb4;
+  --note-pink-ink: #b02a6b;
+  --note-purple: #e2d6ff;
+  --note-purple-border: #a48be6;
+  --note-purple-ink: #5b3cc4;
+  --note-blue: #cfe3ff;
+  --note-blue-border: #7aa7e8;
+  --note-blue-ink: #1f5fbf;
+  --note-teal: #c5efe9;
+  --note-teal-border: #5fbcae;
+  --note-teal-ink: #0f7a6c;
+  --note-green: #d3f0c8;
+  --note-green-border: #7fc068;
+  --note-green-ink: #2f7d1c;
+  --note-gray: #e9e6df;
+  --note-gray-border: #b4aea2;
+  --note-gray-ink: #6b665c;
+  --note-white: #ffffff;
+  --note-white-border: #c4bdaf;
+  --note-white-ink: var(--foreground);
+  --note-ink: var(--foreground);
+  --note-ink-border: var(--foreground);
+  --note-ink-ink: var(--foreground);
+
+  /* 蛍光ペンの帯。不透明なので、どの地の上でもこの色のまま出る */
+  --highlight-yellow: #ffee58;
+  --highlight-green: #a8efb4;
+  --highlight-blue: #a9d6ff;
+  --highlight-pink: #ffb3d4;
+  --highlight-orange: #ffc680;
+
+  /* ボードの地の格子と、ボードの中身に共通の色 */
+  --board-dot: #d6cfbf;
+  --board-surface: #ffffff;
+  --board-on-dark: #ffffff;
+  --board-on-dark-muted: #d6cfbf;
+  --board-line: #c4bdaf;
+  --board-line-soft: #e4dfd3;
+  --board-line-faint: #eeeae0;
+  --board-head: #ece8de;
+  --board-band: #f3f0e8;
+  --board-text-muted: #6b665c;
+  --board-text-faint: #9a948a;
+  --board-link: #1f5fbf;
+  --board-link-on-dark: #a9c8ff;
+  --board-code: rgba(40, 30, 10, 0.1);
+  --board-code-on-dark: rgba(255, 255, 255, 0.2);
+  --board-chip: rgba(43, 42, 40, 0.82);
+  --board-note-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 6px 12px -6px rgba(60, 50, 20, 0.35);
+
+  /* ガント */
+  --gantt-mark: var(--destructive);
+  --gantt-today: var(--board-link);
+  --gantt-row-tagged: rgba(255, 214, 10, 0.16);
+
+  /* コメント */
+  --comment: #e8590c;
+  --comment-resolved: var(--board-text-faint);
+  --comment-pin-shadow: 0 3px 8px -2px rgba(40, 20, 0, 0.5);
+
+  /* ボードの中身の文字の大きさ。
+   * 文字の要素の大きさ（s〜huge）と表・ラベルの大きさは、shared/model.ts と shared/check.ts にも同じ数がある
+   * （描かずに大きさを見積もるため）。変えるときは、そちらも合わせる。 */
+  --board-text-s: 12px;
+  --board-text-m: 16px;
+  --board-text-l: 24px;
+  --board-text-xl: 40px;
+  --board-text-huge: 96px;
+  --board-text-section: 15px;
+  --board-text-tag: 10.5px;
+  --board-text-table: 13px;
+  --board-text-label: 12px;
+  --board-text-gantt-title: 14px;
+  --board-text-gantt-band: 11px;
+  --board-text-gantt-micro: 10px;
+  --board-text-pin: 13px;
+  --board-text-pin-small: 11px;
+}

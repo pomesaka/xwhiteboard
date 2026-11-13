@@ -83,4 +83,4 @@ bun test
 bun run typecheck
 ```
 
-画面のスクリプトはサーバーの起動時に組み立てる。`src/client` を直したら `xwb stop` で止めて、起動し直す。
+画面のスクリプトと CSS はサーバーの起動時に組み立てる。`src/client` を直したら `xwb stop` で止めて、起動し直す。画面の色・文字・余白の決め方は [docs/ui-design.md](docs/ui-design.md) にある。

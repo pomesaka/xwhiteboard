@@ -1,40 +1,15 @@
-:root {
-  --paper: #f6f3ec;
-  --dot: #d6cfbf;
-  --ink: #2b2a28;
-  --sel: #2f6fed;
-  --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  height: 100%;
-  overflow: hidden;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--font);
-  overscroll-behavior: none;
-}
-
-button {
-  font: inherit;
-  color: inherit;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
+/* ボードの中身（付箋・図形・表・ガント・コメント・矢印）の描き方。
+ * 色と文字の大きさは、名前で参照する。値は ui-design/themes/xwb.css（共通契約）と xwb-theme.css（xwb が足す役割）にある。
+ * WHY utility で書かない: 中身の見た目は、データ（色の名前、形、状態）で決まる class の組み合わせと、
+ * 疑似要素・変数・拡大率の計算でできている。utility の並びより、決まりとして書くほうが読める。
+ * 操作の部品（ツールバー、選択バー、コメントの欄の面と文字）は、utility で書く（app.css と main.ts）。 */
 
 #stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
   touch-action: none;
-  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.4px);
+  background-image: radial-gradient(var(--board-dot) 1.2px, transparent 1.4px);
   cursor: default;
 }
 #stage.tool-add {
@@ -62,18 +37,18 @@ button {
   pointer-events: none;
 }
 
-/* ---- 色。--bg は面、--bd は縁、--ink は線と文字 ---- */
-.c-yellow { --bg: #fff1a8; --bd: #e2c343; --ink: #8a6d00; }
-.c-orange { --bg: #ffd9b0; --bd: #e9a45c; --ink: #a85a10; }
-.c-red { --bg: #ffc9c4; --bd: #e2766c; --ink: #b3261e; }
-.c-pink { --bg: #ffd0e4; --bd: #e58bb4; --ink: #b02a6b; }
-.c-purple { --bg: #e2d6ff; --bd: #a48be6; --ink: #5b3cc4; }
-.c-blue { --bg: #cfe3ff; --bd: #7aa7e8; --ink: #1f5fbf; }
-.c-teal { --bg: #c5efe9; --bd: #5fbcae; --ink: #0f7a6c; }
-.c-green { --bg: #d3f0c8; --bd: #7fc068; --ink: #2f7d1c; }
-.c-gray { --bg: #e9e6df; --bd: #b4aea2; --ink: #6b665c; }
-.c-white { --bg: #ffffff; --bd: #c4bdaf; --ink: #2b2a28; }
-.c-ink { --bg: #2b2a28; --bd: #2b2a28; --ink: #2b2a28; }
+/* ---- 色。--el-bg は面、--el-bd は縁、--el-ink は線と文字 ---- */
+.c-yellow { --el-bg: var(--note-yellow); --el-bd: var(--note-yellow-border); --el-ink: var(--note-yellow-ink); }
+.c-orange { --el-bg: var(--note-orange); --el-bd: var(--note-orange-border); --el-ink: var(--note-orange-ink); }
+.c-red { --el-bg: var(--note-red); --el-bd: var(--note-red-border); --el-ink: var(--note-red-ink); }
+.c-pink { --el-bg: var(--note-pink); --el-bd: var(--note-pink-border); --el-ink: var(--note-pink-ink); }
+.c-purple { --el-bg: var(--note-purple); --el-bd: var(--note-purple-border); --el-ink: var(--note-purple-ink); }
+.c-blue { --el-bg: var(--note-blue); --el-bd: var(--note-blue-border); --el-ink: var(--note-blue-ink); }
+.c-teal { --el-bg: var(--note-teal); --el-bd: var(--note-teal-border); --el-ink: var(--note-teal-ink); }
+.c-green { --el-bg: var(--note-green); --el-bd: var(--note-green-border); --el-ink: var(--note-green-ink); }
+.c-gray { --el-bg: var(--note-gray); --el-bd: var(--note-gray-border); --el-ink: var(--note-gray-ink); }
+.c-white { --el-bg: var(--note-white); --el-bd: var(--note-white-border); --el-ink: var(--note-white-ink); }
+.c-ink { --el-bg: var(--note-ink); --el-bd: var(--note-ink-border); --el-ink: var(--note-ink-ink); }
 
 /* ---- 要素 ---- */
 .el {
@@ -83,7 +58,7 @@ button {
   -webkit-user-select: none;
 }
 .el.sel {
-  outline: 2px solid var(--sel);
+  outline: 2px solid var(--selected-border);
   outline-offset: 3px;
 }
 /* 固定した要素を選んだときは、枠を点線にする */
@@ -102,13 +77,13 @@ button {
   align-items: center;
   justify-content: center;
   padding: 10px 12px;
-  background: var(--bg);
-  border: 1.5px solid var(--bd);
-  color: #2b2a28;
+  background: var(--el-bg);
+  border: 1.5px solid var(--el-bd);
+  color: var(--foreground);
   overflow: hidden;
 }
 .shape.c-ink {
-  color: #fff;
+  color: var(--board-on-dark);
 }
 .shape .body {
   max-width: 100%;
@@ -123,22 +98,22 @@ button {
   min-width: 1em;
 }
 .shape .tag {
-  font-size: 10.5px;
+  font-size: var(--board-text-tag);
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: var(--ink);
+  color: var(--el-ink);
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .shape.c-ink .tag {
-  color: #d6cfbf;
+  color: var(--board-on-dark-muted);
 }
 .s-note {
   border: 0;
   border-radius: 2px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 6px 12px -6px rgba(60, 50, 20, 0.35);
+  box-shadow: var(--board-note-shadow);
   align-items: flex-start;
   justify-content: flex-start;
 }
@@ -171,12 +146,12 @@ button {
   overflow: visible;
 }
 .shape .shp path {
-  stroke: var(--bd);
+  stroke: var(--el-bd);
   stroke-width: 1.5px;
   stroke-linejoin: round;
 }
 .shape .shp .fill {
-  fill: var(--bg);
+  fill: var(--el-bg);
 }
 .shape .shp .line {
   fill: none;
@@ -205,17 +180,17 @@ button {
 }
 
 /* 枠線の色（border）。面の色（color）とは別に、線の濃い色を使う */
-.b-yellow { --bd: #8a6d00; }
-.b-orange { --bd: #a85a10; }
-.b-red { --bd: #b3261e; }
-.b-pink { --bd: #b02a6b; }
-.b-purple { --bd: #5b3cc4; }
-.b-blue { --bd: #1f5fbf; }
-.b-teal { --bd: #0f7a6c; }
-.b-green { --bd: #2f7d1c; }
-.b-gray { --bd: #6b665c; }
-.b-white { --bd: #ffffff; }
-.b-ink { --bd: #2b2a28; }
+.b-yellow { --el-bd: var(--note-yellow-ink); }
+.b-orange { --el-bd: var(--note-orange-ink); }
+.b-red { --el-bd: var(--note-red-ink); }
+.b-pink { --el-bd: var(--note-pink-ink); }
+.b-purple { --el-bd: var(--note-purple-ink); }
+.b-blue { --el-bd: var(--note-blue-ink); }
+.b-teal { --el-bd: var(--note-teal-ink); }
+.b-green { --el-bd: var(--note-green-ink); }
+.b-gray { --el-bd: var(--note-gray-ink); }
+.b-white { --el-bd: var(--note-white); }
+.b-ink { --el-bd: var(--note-ink-ink); }
 
 /* 中を塗らない */
 .shape.hollow {
@@ -226,7 +201,7 @@ button {
   fill: none;
 }
 .shape.c-ink.hollow {
-  color: #2b2a28;
+  color: var(--foreground);
 }
 /* 点線の枠 */
 .shape.dashed {
@@ -239,7 +214,7 @@ button {
 .s-note.bordered,
 .s-note.hollow,
 .s-note.dashed {
-  border: 1.5px solid var(--bd);
+  border: 1.5px solid var(--el-bd);
   box-shadow: none;
 }
 .s-note.dashed {
@@ -248,9 +223,9 @@ button {
 
 .container {
   z-index: 1;
-  border: 1.5px solid var(--bd);
+  border: 1.5px solid var(--el-bd);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--bg) 38%, transparent);
+  background: color-mix(in srgb, var(--el-bg) 38%, transparent);
   /* 中の空いた場所は背景として扱う（範囲選択を始められるように）。つかめるのは題名だけ */
   pointer-events: none;
 }
@@ -264,9 +239,9 @@ button {
   min-height: 1.5em;
   padding: 3px 12px;
   border-radius: 999px;
-  background: var(--bd);
-  color: #fff;
-  font-size: 15px;
+  background: var(--el-bd);
+  color: var(--board-on-dark);
+  font-size: var(--board-text-section);
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -275,11 +250,11 @@ button {
 }
 .container.c-white .ttl,
 .container.c-gray .ttl {
-  background: #6b665c;
+  background: var(--board-text-muted);
 }
 
 .text {
-  color: var(--ink);
+  color: var(--el-ink);
   line-height: 1.45;
 }
 .text .txt {
@@ -291,11 +266,11 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.sz-s { font-size: 12px; }
-.sz-m { font-size: 16px; }
-.sz-l { font-size: 24px; font-weight: 600; }
-.sz-xl { font-size: 40px; font-weight: 700; letter-spacing: 0.01em; }
-.sz-huge { font-size: 96px; font-weight: 800; letter-spacing: 0.01em; }
+.sz-s { font-size: var(--board-text-s); }
+.sz-m { font-size: var(--board-text-m); }
+.sz-l { font-size: var(--board-text-l); font-weight: 600; }
+.sz-xl { font-size: var(--board-text-xl); font-weight: 700; letter-spacing: 0.01em; }
+.sz-huge { font-size: var(--board-text-huge); font-weight: 800; letter-spacing: 0.01em; }
 
 /* 文字の寄せ（align）。書いたときだけ、既定（文字と付箋は左、ほかの図形は中央）を上書きする。
    図形は、文字の入る場所を箱の幅いっぱいに広げてから寄せる */
@@ -315,13 +290,13 @@ button {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  background: #fff;
-  font-size: 13px;
+  background: var(--board-surface);
+  font-size: var(--board-text-table);
   line-height: 19px;
 }
 .table th,
 .table td {
-  border: 1px solid #c4bdaf;
+  border: 1px solid var(--board-line);
   padding: 7px 10px;
   text-align: left;
   vertical-align: top;
@@ -330,7 +305,7 @@ button {
   height: 34px;
 }
 .table th {
-  background: #ece8de;
+  background: var(--board-head);
   font-weight: 700;
 }
 
@@ -344,29 +319,29 @@ button {
 
 /* ---- ガントチャート。中の部品の位置と大きさは、shared/gantt.ts の配置で決めて main.ts が入れる ---- */
 .gantt {
-  background: #fff;
-  border: 1.5px solid #c4bdaf;
+  background: var(--board-surface);
+  border: 1.5px solid var(--board-line);
   border-radius: 10px;
-  font-size: 12px;
-  color: #2b2a28;
+  font-size: var(--board-text-label);
+  color: var(--foreground);
 }
 .gantt > div {
   position: absolute;
 }
 .gtitle {
-  font-size: 14px;
+  font-size: var(--board-text-gantt-title);
   font-weight: 700;
   white-space: nowrap;
 }
 .ggroup {
   padding-left: 4px;
   line-height: 16px;
-  font-size: 10px;
+  font-size: var(--board-text-gantt-micro);
   font-weight: 700;
-  color: #9a948a;
+  color: var(--board-text-faint);
   white-space: nowrap;
   overflow: hidden;
-  border-left: 1px solid #c4bdaf;
+  border-left: 1px solid var(--board-line);
 }
 /* WHY flex の右寄せ: 入りきらない文字を、右ではなく左へはみ出させる（右には次の年の見出しがある） */
 .ggroup.narrow {
@@ -375,22 +350,22 @@ button {
   overflow: visible;
   padding: 0 3px 0 0;
   border-left: 0;
-  border-right: 1px solid #c4bdaf;
+  border-right: 1px solid var(--board-line);
 }
 .gtick {
   line-height: 20px;
   text-align: center;
   font-weight: 600;
-  color: #6b665c;
+  color: var(--board-text-muted);
   white-space: nowrap;
   overflow: hidden;
-  border-bottom: 1px solid #c4bdaf;
+  border-bottom: 1px solid var(--board-line);
 }
 .gline {
-  border-left: 1px solid #e4dfd3;
+  border-left: 1px solid var(--board-line-soft);
 }
 .grow {
-  border-bottom: 1px solid #eeeae0;
+  border-bottom: 1px solid var(--board-line-faint);
 }
 .gname {
   display: flex;
@@ -411,40 +386,40 @@ button {
   flex: none;
   padding: 1px 6px;
   border-radius: 999px;
-  background: #2b2a28;
-  color: #fff;
-  font-size: 10px;
+  background: var(--foreground);
+  color: var(--board-on-dark);
+  font-size: var(--board-text-gantt-micro);
   line-height: 14px;
   white-space: nowrap;
 }
 .grow.tagged {
-  background: rgba(255, 214, 10, 0.16);
+  background: var(--gantt-row-tagged);
 }
 /* まとまりの見出し */
 .ggrp {
   padding-left: 4px;
   line-height: 26px;
-  font-size: 11px;
+  font-size: var(--board-text-gantt-band);
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #6b665c;
-  background: #f3f0e8;
-  border-bottom: 1px solid #c4bdaf;
+  color: var(--board-text-muted);
+  background: var(--board-band);
+  border-bottom: 1px solid var(--board-line);
   white-space: nowrap;
   overflow: hidden;
 }
 .gbar {
   border-radius: 6px;
-  background: var(--bd);
+  background: var(--el-bd);
   cursor: grab;
 }
 /* 状態。これからの行は枠だけ、済んだ行は薄く */
 .gbar.st-planned {
-  background: color-mix(in srgb, var(--bg) 60%, #fff);
-  border: 1.5px dashed var(--bd);
+  background: color-mix(in srgb, var(--el-bg) 60%, var(--board-surface));
+  border: 1.5px dashed var(--el-bd);
 }
 .gbar.st-done {
-  background: color-mix(in srgb, var(--bd) 45%, #fff);
+  background: color-mix(in srgb, var(--el-bd) 45%, var(--board-surface));
 }
 .gedge {
   position: absolute;
@@ -460,13 +435,13 @@ button {
   right: 0;
 }
 .gmline {
-  border-left: 1.5px dashed #b3261e;
+  border-left: 1.5px dashed var(--gantt-mark);
 }
 .gmark {
   padding-left: 12px;
   line-height: 26px;
   font-weight: 700;
-  color: #b3261e;
+  color: var(--gantt-mark);
   white-space: nowrap;
 }
 /* マイルストーンの印（ひし形）。日付の線の真下に置く */
@@ -477,18 +452,18 @@ button {
   top: 8px;
   width: 9px;
   height: 9px;
-  background: #b3261e;
+  background: var(--gantt-mark);
   transform: rotate(45deg);
 }
 .gtoday {
-  border-left: 2px solid #1f5fbf;
+  border-left: 2px solid var(--gantt-today);
 }
 /* 「今日」の札。マイルストーンと同じ段に置き、色と印の形（丸）で見分ける */
 .gmark.today {
-  color: #1f5fbf;
+  color: var(--gantt-today);
 }
 .gmark.today::before {
-  background: #1f5fbf;
+  background: var(--gantt-today);
   border-radius: 50%;
   transform: none;
 }
@@ -515,9 +490,9 @@ button {
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: rgba(43, 42, 40, 0.82);
-  color: #fff;
-  font-size: 14px;
+  background: var(--board-chip);
+  color: var(--board-on-dark);
+  font-size: var(--board-text-gantt-title);
   line-height: 24px;
   text-align: center;
   text-decoration: none;
@@ -538,8 +513,8 @@ button {
 .el code {
   padding: 0.05em 0.3em;
   border-radius: 4px;
-  background: rgba(40, 30, 10, 0.1);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--board-code);
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 /* 蛍光ペン。文字の下半分に帯を引く。
@@ -548,7 +523,7 @@ button {
   /* WHY ここで --hl を決めない: 色の指定（.hl-pink など）より、この行のほうが優先されて、全部が黄色になる */
   padding: 0.05em 0.18em;
   border-radius: 3px;
-  background: var(--hl, #ffee58);
+  background: var(--hl, var(--highlight-yellow));
   color: inherit;
   /* 文字の高さいっぱいの、不透明な淡い帯。
      WHY 下半分だけの濃い帯にしない: 帯の上の端が文字の真ん中を横切って、取り消し線のように見える。
@@ -560,36 +535,31 @@ button {
 }
 /* 濃い箱では文字が白いので、帯の上の文字だけ濃い色にする */
 .shape.c-ink mark {
-  color: #2b2a28;
+  color: var(--foreground);
 }
-/* 帯の色。shared/colors.ts の HIGHLIGHT と同じ値にする（見た目の検査が、地の色との近さを測るのに使う） */
-.hl-yellow { --hl: #ffee58; }
-.hl-green { --hl: #a8efb4; }
-.hl-blue { --hl: #a9d6ff; }
-.hl-pink { --hl: #ffb3d4; }
-.hl-orange { --hl: #ffc680; }
-/* 編集中のバーの、蛍光ペンの色のボタン */
-#bar .sw[class*="hl-"] {
-  background: var(--hl);
-  border-color: rgba(255, 255, 255, 0.6);
-}
+/* 帯の色 */
+.hl-yellow { --hl: var(--highlight-yellow); }
+.hl-green { --hl: var(--highlight-green); }
+.hl-blue { --hl: var(--highlight-blue); }
+.hl-pink { --hl: var(--highlight-pink); }
+.hl-orange { --hl: var(--highlight-orange); }
 .el a {
-  color: #1f5fbf;
+  color: var(--board-link);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 .shape.c-ink code {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--board-code-on-dark);
 }
 .shape.c-ink a {
-  color: #a9c8ff;
+  color: var(--board-link-on-dark);
 }
 
 /* ---- コメント ----
    ボードの中身ではなく、ボードについてのやりとり。中身の上に重ねて出す */
 .comment {
-  --c: #e8590c;
+  --c: var(--comment);
   z-index: 6;
   pointer-events: none;
 }
@@ -601,7 +571,7 @@ button {
   animation: none;
 }
 .comment.resolved {
-  --c: #9a948a;
+  --c: var(--comment-resolved);
   /* 片付いたコメントは、ボードに溜めない。右上の「解決済み」を押したときだけ見せる */
   display: none;
 }
@@ -633,12 +603,12 @@ body.show-resolved .comment.resolved {
   /* 吹き出しの形。左下の角が、指している点 */
   border-radius: 50% 50% 50% 4px;
   background: var(--c);
-  color: #fff;
-  font-size: 13px;
+  color: var(--board-on-dark);
+  font-size: var(--board-text-pin);
   font-weight: 700;
   line-height: 28px;
   text-align: center;
-  box-shadow: 0 3px 8px -2px rgba(40, 20, 0, 0.5);
+  box-shadow: var(--comment-pin-shadow);
   cursor: pointer;
   transform-origin: 0 100%;
   transform: translate(0, -100%) scale(var(--inv, 1));
@@ -650,79 +620,31 @@ body.show-resolved .comment.resolved {
   width: 20px;
   height: 20px;
   line-height: 20px;
-  font-size: 11px;
+  font-size: var(--board-text-pin-small);
   box-shadow: none;
 }
 @keyframes unread {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sel) 80%, transparent); }
-  50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--sel) 0%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--selected-border) 80%, transparent); }
+  50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--selected-border) 0%, transparent); }
 }
 .comment.unread .cpin {
-  background: var(--sel);
+  background: var(--selected-border);
   animation: unread 1.4s ease-out infinite;
 }
+/* やりとりの欄。面・文字・余白は main.ts が utility で付ける。ここは、ボードの拡大率に合わせた位置と大きさだけ */
 .cpanel {
   pointer-events: auto;
   position: absolute;
   left: 0;
   top: 0;
-  width: 320px;
   margin-left: calc(38px * var(--inv, 1));
-  padding: 10px;
-  border-radius: 10px;
-  background: #fff;
-  color: #2b2a28;
-  box-shadow: 0 0 0 1px rgba(40, 30, 10, 0.12), 0 14px 34px -10px rgba(40, 30, 10, 0.45);
-  font-size: 13px;
   transform-origin: 0 0;
   transform: translate(0, calc(-28px * var(--inv, 1))) scale(var(--inv, 1));
-  user-select: text;
-  -webkit-user-select: text;
 }
 .comment.area .cpanel {
   left: 100%;
 }
-.cmsgs {
-  max-height: 280px;
-  overflow-y: auto;
-  /* 端まで来たスクロールを、外（ボード）へ渡さない */
-  overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.cmsgs:not(:empty) {
-  margin-bottom: 10px;
-}
-.cmsg {
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: #f3f0e8;
-}
-.cmsg.by-claude {
-  background: color-mix(in srgb, var(--sel) 10%, #fff);
-}
-.cwho {
-  font-size: 11px;
-  font-weight: 700;
-  color: #6b665c;
-  margin-bottom: 2px;
-}
-.ctext {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-}
-/* やりとりの末尾に出す状態。返事待ちは点が動き、送れていないものは赤 */
-.cstate {
-  padding: 0 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #6b665c;
-}
-.cstate.unsent {
-  color: #b3261e;
-}
+/* やりとりの末尾の「返事待ち」。点が動く */
 @keyframes waiting {
   0% { content: ""; }
   25% { content: "."; }
@@ -732,46 +654,6 @@ body.show-resolved .comment.resolved {
 .cstate.wait::after {
   content: "";
   animation: waiting 1.6s steps(1) infinite;
-}
-.crow button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.cinput {
-  display: block;
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid #c4bdaf;
-  border-radius: 8px;
-  font: inherit;
-  line-height: 1.5;
-  resize: vertical;
-  outline: none;
-  overscroll-behavior: contain;
-}
-.cinput:focus {
-  border-color: var(--sel);
-}
-.crow {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 8px;
-}
-.crow button {
-  padding: 6px 12px;
-  border-radius: 7px;
-  font-size: 13px;
-}
-.crow button:first-child {
-  background: var(--ink);
-  color: #fff;
-  font-weight: 700;
-}
-.crow button:last-child {
-  color: #6b665c;
-}
-.crow button:last-child:hover {
-  background: #f3f0e8;
 }
 body.export .comment {
   display: none;
@@ -790,7 +672,7 @@ body.export.with-comments .comment.resolved {
 }
 #lines .vis {
   fill: none;
-  stroke: var(--ink);
+  stroke: var(--el-ink);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -806,44 +688,44 @@ body.export.with-comments .comment.resolved {
   cursor: pointer;
 }
 #lines .sel .hit {
-  stroke: color-mix(in srgb, var(--sel) 28%, transparent);
+  stroke: color-mix(in srgb, var(--selected-border) 28%, transparent);
 }
 #lines .head {
-  fill: var(--ink);
-  stroke: var(--ink);
+  fill: var(--el-ink);
+  stroke: var(--el-ink);
   stroke-width: 1.5;
   stroke-linejoin: round;
 }
 #lines text {
-  font-family: var(--font);
-  font-size: 12px;
+  font-family: var(--font-sans);
+  font-size: var(--board-text-label);
   font-weight: 600;
-  fill: var(--ink);
+  fill: var(--el-ink);
   text-anchor: middle;
   dominant-baseline: central;
   paint-order: stroke;
-  stroke: var(--paper);
+  stroke: var(--background);
   stroke-width: 5px;
   stroke-linejoin: round;
 }
 #lines .preview {
   fill: none;
-  stroke: var(--sel);
+  stroke: var(--selected-border);
   stroke-width: 2;
   stroke-dasharray: 5 5;
 }
 
 /* ---- エージェントの書き込みを知らせる ---- */
 @keyframes flash {
-  0% { box-shadow: 0 0 0 0 rgba(47, 111, 237, 0.9), 0 0 0 0 rgba(47, 111, 237, 0.35); }
-  30% { box-shadow: 0 0 0 4px rgba(47, 111, 237, 0.9), 0 0 0 16px rgba(47, 111, 237, 0.25); }
-  100% { box-shadow: 0 0 0 4px rgba(47, 111, 237, 0), 0 0 0 16px rgba(47, 111, 237, 0); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 90%, transparent), 0 0 0 0 color-mix(in srgb, var(--info) 35%, transparent); }
+  30% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--info) 90%, transparent), 0 0 0 16px color-mix(in srgb, var(--info) 25%, transparent); }
+  100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--info) 0%, transparent), 0 0 0 16px color-mix(in srgb, var(--info) 0%, transparent); }
 }
 .el.flash {
   animation: flash 1.8s ease-out;
 }
 @keyframes flash-line {
-  0%, 60% { filter: drop-shadow(0 0 5px rgba(47, 111, 237, 0.95)); }
+  0%, 60% { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--info) 95%, transparent)); }
   100% { filter: none; }
 }
 #lines g.flash {
@@ -864,10 +746,10 @@ body.export.with-comments .comment.resolved {
   position: absolute;
   border-radius: 6px;
   background:
-    linear-gradient(90deg, var(--sel) 50%, transparent 0) repeat-x 0 0 / 14px 2px,
-    linear-gradient(90deg, var(--sel) 50%, transparent 0) repeat-x 0 100% / 14px 2px,
-    linear-gradient(0deg, var(--sel) 50%, transparent 0) repeat-y 0 0 / 2px 14px,
-    linear-gradient(0deg, var(--sel) 50%, transparent 0) repeat-y 100% 0 / 2px 14px;
+    linear-gradient(90deg, var(--selected-border) 50%, transparent 0) repeat-x 0 0 / 14px 2px,
+    linear-gradient(90deg, var(--selected-border) 50%, transparent 0) repeat-x 0 100% / 14px 2px,
+    linear-gradient(0deg, var(--selected-border) 50%, transparent 0) repeat-y 0 0 / 2px 14px,
+    linear-gradient(0deg, var(--selected-border) 50%, transparent 0) repeat-y 100% 0 / 2px 14px;
   animation: claim 1s linear infinite;
 }
 .claim span {
@@ -877,9 +759,9 @@ body.export.with-comments .comment.resolved {
   margin-bottom: 4px;
   padding: 2px 8px;
   border-radius: 4px;
-  background: var(--sel);
-  color: #fff;
-  font-size: 12px;
+  background: var(--selected-border);
+  color: var(--board-on-dark);
+  font-size: var(--board-text-label);
   white-space: nowrap;
 }
 
@@ -889,164 +771,20 @@ body.export.with-comments .comment.resolved {
   width: 12px;
   height: 12px;
   margin: -6px 0 0 -6px;
-  border: 2px solid var(--sel);
+  border: 2px solid var(--selected-border);
   border-radius: 3px;
-  background: #fff;
+  background: var(--board-surface);
   cursor: nwse-resize;
 }
 
 #marquee {
   position: absolute;
-  border: 1px solid var(--sel);
-  background: color-mix(in srgb, var(--sel) 10%, transparent);
+  border: 1px solid var(--selected-border);
+  background: color-mix(in srgb, var(--selected-border) 10%, transparent);
   pointer-events: none;
 }
 
-/* ---- 操作の部品 ---- */
-#top,
-#view,
-#tools,
-#bar {
-  position: fixed;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  background: var(--ink);
-  color: #f6f3ec;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px -10px rgba(30, 25, 10, 0.6);
-  font-size: 13px;
-}
-#top {
-  left: 14px;
-  top: 14px;
-  gap: 10px;
-  padding: 8px 14px 8px 12px;
-  max-width: 46vw;
-}
-#title {
-  font-weight: 700;
-  font-size: 14px;
-  min-width: 4em;
-  min-height: 1.4em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  outline: none;
-}
-#conn {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #e2766c;
-}
-#conn.on {
-  background: #7fc068;
-}
-#view {
-  right: 14px;
-  top: 14px;
-  padding: 4px;
-  gap: 2px;
-}
-#zoom {
-  width: 3.4em;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-#tools {
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  flex-direction: column;
-  padding: 4px;
-  gap: 2px;
-}
-#bar {
-  left: 50%;
-  top: 14px;
-  transform: translateX(-50%);
-  padding: 4px 6px;
-  gap: 4px;
-}
-#bar[hidden],
-#toast[hidden] {
-  display: none;
-}
-#view button,
-#tools button,
-#bar button {
-  padding: 7px 10px;
-  border-radius: 7px;
-  white-space: nowrap;
-}
-#view button:hover,
-#tools button:hover,
-#bar button:hover {
-  background: rgba(255, 255, 255, 0.14);
-}
-#view button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-#view button.on,
-#tools button.on,
-#bar button.on {
-  background: #f6f3ec;
-  color: var(--ink);
-}
-#bar .sw {
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 2px solid var(--bd);
-}
-#bar .sw.c-ink {
-  border-color: #8a857b;
-}
-#bar .sw:hover {
-  background: var(--bg);
-  transform: scale(1.2);
-}
-#bar select {
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.14);
-  color: inherit;
-  font: inherit;
-}
-#bar .sep {
-  width: 1px;
-  height: 18px;
-  margin: 0 4px;
-  background: rgba(255, 255, 255, 0.25);
-}
-
-#toast {
-  position: fixed;
-  z-index: 20;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  max-width: 70vw;
-  padding: 10px 16px;
-  border-radius: 8px;
-  background: #b3261e;
-  color: #fff;
-  font-size: 13px;
-}
-
-/* 書き出しの画面には、操作の部品と格子を出さない */
-body.export #top,
-body.export #view,
-body.export #tools,
-body.export #bar {
-  display: none;
-}
+/* 書き出しの画面には、格子を出さない（操作の部品を隠す決まりは app.css） */
 body.export #stage {
   background-image: none;
 }

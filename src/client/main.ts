@@ -531,21 +531,24 @@ function renderComment(el: El, n: HTMLElement): void {
   n.append(pin);
   if (!open || exporting) return;
 
-  const panel = div("cpanel");
-  const msgs = div("cmsgs");
+  // 欄の位置と拡大率は board.css の .cpanel、面と文字はここの utility
+  const panel = div("cpanel w-80 rounded-card bg-card p-3 text-caption text-card-foreground shadow-lg select-text");
+  // WHY overscroll-contain: 端まで来たスクロールを、外（ボード）へ渡さない
+  const msgs = div("flex max-h-72 flex-col gap-2 overflow-y-auto overscroll-contain not-empty:mb-3");
   for (const m of thread) {
-    const msg = div(`cmsg by-${m.by}`);
-    msg.append(div("cwho", `${m.by === "human" ? "あなた" : "Claude"} ${m.at.slice(11, 16)}`), div("ctext", m.text));
+    const msg = div(`rounded-field p-2 ${m.by === "human" ? "bg-muted" : "bg-selected"}`);
+    msg.append(div("mb-1 font-bold text-muted-foreground", `${m.by === "human" ? "あなた" : "Claude"} ${m.at.slice(11, 16)}`), div("wrap-anywhere whitespace-pre-wrap", m.text));
     msgs.append(msg);
   }
   // いちばん新しいやりとりが人のものなら、Claude はまだ答えていない。届けられたかどうかで、出す状態を分ける。
   // WHY データから決める: 画面を開き直しても、返事を待っているコメントが分かるようにする
   const sending = sendingId === el.id;
   if (!sending && !el.resolved && thread.at(-1)?.by === "human") {
-    msgs.append(el.unsent ? div("cstate unsent", "まだ Claude に送れていません") : div("cstate wait", "Claude の返事待ち"));
+    msgs.append(el.unsent ? div("px-1 font-semibold text-destructive", "まだ Claude に送れていません") : div("cstate wait px-1 font-semibold text-muted-foreground", "Claude の返事待ち"));
   }
   const input = document.createElement("textarea");
-  input.className = "cinput";
+  // cinput は、欄を探すための名前（見た目は utility）
+  input.className = "cinput block w-full resize-y overscroll-contain rounded-field border border-input bg-card p-2 outline-none focus-visible:border-ring";
   input.rows = 2;
   input.placeholder = "Claude に聞く";
   input.value = draft;
@@ -564,17 +567,18 @@ function renderComment(el: El, n: HTMLElement): void {
       send();
     }
   });
-  const row = div("crow");
+  const row = div("mt-2 flex justify-between");
   // 届け先が無くて送れなかったやりとりが残っているときは、本文なしでも送り直せる
   const sendButton = button(sending ? "送信中…" : sentId === el.id ? "送りました" : el.unsent ? "送り直す" : "送る", false, send, "⌘Enter");
   sendButton.disabled = sending;
-  row.append(
-    sendButton,
-    button(el.resolved ? "未解決に戻す" : "解決", false, () => {
-      void setOps([{ id: el.id, patch: { resolved: el.resolved ? null : true } }]);
-      if (!el.resolved) closeComment();
-    }),
-  );
+  // 欄は白い面なので、帯のボタン（chrome-button）ではなく、主の操作と控えめな操作の見た目にする
+  sendButton.className = "cursor-pointer rounded-field bg-primary px-3 py-2 font-bold text-primary-foreground hover:bg-primary-hover focus-visible:focus-ring disabled:cursor-default disabled:disabled-dim";
+  const resolveButton = button(el.resolved ? "未解決に戻す" : "解決", false, () => {
+    void setOps([{ id: el.id, patch: { resolved: el.resolved ? null : true } }]);
+    if (!el.resolved) closeComment();
+  });
+  resolveButton.className = "cursor-pointer rounded-field px-3 py-2 text-muted-foreground hover:bg-muted focus-visible:focus-ring";
+  row.append(sendButton, resolveButton);
   panel.append(msgs, input, row);
   n.append(panel);
   msgs.scrollTop = msgs.scrollHeight;
@@ -802,14 +806,18 @@ function renderResolvedToggle(): void {
   if (count === 0) showResolved = false;
   resolvedButton.hidden = count === 0 || exporting;
   resolvedButton.textContent = `解決済み ${count}`;
-  resolvedButton.classList.toggle("on", showResolved);
+  resolvedButton.setAttribute("aria-pressed", String(showResolved));
   document.body.classList.toggle("show-resolved", showResolved);
 }
 
 function toast(message: string): void {
-  toastNode.textContent = message;
+  // WHY 時間で消さない: 失敗の知らせは、見逃すと画面のどこにも残らない。閉じるまで出しておく
+  const close = document.createElement("button");
+  close.textContent = "閉じる";
+  close.className = "flex-none cursor-pointer rounded-field px-2 py-1 font-bold hover:bg-destructive-hover";
+  close.addEventListener("click", () => (toastNode.hidden = true));
+  toastNode.replaceChildren(div("min-w-0 wrap-anywhere", message), close);
   toastNode.hidden = false;
-  setTimeout(() => (toastNode.hidden = true), 5000);
 }
 
 // ---- データ ----
@@ -1044,10 +1052,12 @@ function selected(): El[] {
   return out;
 }
 
+/** 操作の帯のボタン。効いている切り替えは aria-pressed で示す（見た目は app.css の chrome-button） */
 function button(label: string, on: boolean, run: () => void, title?: string): HTMLButtonElement {
   const b = document.createElement("button");
   b.textContent = label;
-  if (on) b.className = "on";
+  b.className = "chrome-button";
+  if (on) b.setAttribute("aria-pressed", "true");
   if (title) b.title = title;
   b.addEventListener("click", run);
   return b;
@@ -1070,12 +1080,21 @@ const SHAPE_LABEL: Record<ShapeKind, string> = {
 const SIZE_LABEL: Record<(typeof SIZES)[number], string> = { s: "小", m: "本文", l: "大", xl: "題名", huge: "特大" };
 const ALIGN_LABEL: Record<(typeof ALIGNS)[number], string> = { left: "左寄せ", center: "中央", right: "右寄せ" };
 
-/** 一覧から 1 つ選ぶ部品。選んだ要素の値がそろっていないときは、何も選ばれていない状態にする */
+const COLOR_LABEL: Record<(typeof COLORS)[number], string> = { yellow: "黄", orange: "オレンジ", red: "赤", pink: "ピンク", purple: "紫", blue: "青", teal: "青緑", green: "緑", gray: "灰", white: "白", ink: "墨" };
+
+/** 一覧から 1 つ選ぶ部品。選んだ要素の値がそろっていないときは、値の代わりに、何を選ぶ部品か（title）を出す */
 function picker<T extends string>(title: string, options: readonly T[], labels: Record<T, string>, current: T | null, onPick: (value: string) => void): HTMLSelectElement {
   const pick = document.createElement("select");
+  pick.className = "chrome-select";
   pick.title = title;
   for (const o of options) pick.append(new Option(labels[o], o, false, o === current));
-  if (current === null) pick.selectedIndex = -1;
+  if (current === null) {
+    // 一覧には出さない、見出しだけの項目。空欄のままだと、何の選択かが分からない
+    const heading = new Option(title, "", true, true);
+    heading.disabled = true;
+    heading.hidden = true;
+    pick.prepend(heading);
+  }
   pick.addEventListener("change", () => onPick(pick.value));
   return pick;
 }
@@ -1090,14 +1109,24 @@ const HEADS_LABEL: Record<(typeof HEADS)[number], string> = { end: "→", start:
 function renderBar(): void {
   const sel = selected();
   bar.replaceChildren();
+  // ボタンは、まとまりごとに 1 つの入れ物へ入れる。バーが折り返すときに、まとまりの間で折り返すようにする
+  let group = div("flex items-center gap-1");
+  const add = (...nodes: Node[]): void => {
+    if (!group.isConnected) bar.append(group);
+    group.append(...nodes);
+  };
+  const sep = (): void => {
+    if (group.childElementCount > 0) group = div("flex items-center gap-1");
+  };
   // 文字を編集している間は、選んだ要素のバーの代わりに、装飾のバーを出す
   if (editing?.rich && !exporting) {
     bar.hidden = false;
-    bar.append(button("B", false, () => applyMarkup("bold"), "太字（⌘B）"), button("I", false, () => applyMarkup("italic"), "斜体（⌘I）"), button("S", false, () => applyMarkup("strike"), "取り消し線（⌘⇧X）"), div("sep"));
+    add(button("B", false, () => applyMarkup("bold"), "太字（⌘B）"), button("I", false, () => applyMarkup("italic"), "斜体（⌘I）"), button("S", false, () => applyMarkup("strike"), "取り消し線（⌘⇧X）"));
+    sep();
     for (const c of MARK_COLORS) {
-      const b = button("", false, () => applyMarkup(c), c === "yellow" ? "蛍光ペン（⌘⇧H）" : `蛍光ペン（${c}）`);
-      b.className = `sw hl-${c}`;
-      bar.append(b);
+      const b = button("", false, () => applyMarkup(c), c === "yellow" ? "蛍光ペン（⌘⇧H）" : `蛍光ペン（${COLOR_LABEL[c]}）`);
+      b.className = `chrome-swatch hl-swatch hl-${c}`;
+      add(b);
     }
     return;
   }
@@ -1105,12 +1134,9 @@ function renderBar(): void {
   if (sel.length === 0) return;
   // 固定した要素を選んでいる間は、固定を外すボタンだけを出す（色や形も、固定を外すまで変えられない）
   if (sel.some(isLocked)) {
-    bar.append(button("固定を外す", true, () => void setOps(sel.filter(isLocked).map((e) => ({ id: e.id, patch: { locked: null } })))));
+    add(button("固定を外す", true, () => void setOps(sel.filter(isLocked).map((e) => ({ id: e.id, patch: { locked: null } })))));
     return;
   }
-  const sep = (): void => {
-    if (bar.childElementCount > 0) bar.append(div("sep"));
-  };
   const patchAll = (types: readonly string[], patch: Record<string, unknown>): void => {
     void setOps(sel.filter((e) => types.includes(e.type)).map((e) => ({ id: e.id, patch })));
   };
@@ -1118,9 +1144,9 @@ function renderBar(): void {
   const colored = ["shape", "container", "text", "arrow", "stroke"];
   if (sel.some((e) => colored.includes(e.type))) {
     for (const c of COLORS) {
-      const b = button("", false, () => patchAll(colored, { color: c }), c);
-      b.className = `sw c-${c}`;
-      bar.append(b);
+      const b = button("", false, () => patchAll(colored, { color: c }), COLOR_LABEL[c]);
+      b.className = `chrome-swatch c-${c}`;
+      add(b);
     }
   }
   const first = sel[0];
@@ -1129,13 +1155,8 @@ function renderBar(): void {
     const shapes = sel.filter((e) => e.type === "shape");
     const all = (test: (e: El) => boolean): boolean => shapes.every(test);
     // 形は数が多いので、ボタンを並べずに一覧から選ぶ
-    const pick = document.createElement("select");
-    pick.title = "形";
-    for (const s of SHAPES) pick.append(new Option(SHAPE_LABEL[s], s, false, all((e) => (e.shape ?? "note") === s)));
-    if (!shapes[0] || !all((e) => (e.shape ?? "note") === (shapes[0]?.shape ?? "note"))) pick.selectedIndex = -1;
-    pick.addEventListener("change", () => patchAll(["shape"], { shape: pick.value }));
-    bar.append(
-      pick,
+    add(
+      picker("形", SHAPES, SHAPE_LABEL, shared(shapes.map((e) => e.shape ?? "note")), (v) => patchAll(["shape"], { shape: v })),
       button("塗りなし", all((e) => e.hollow === true), () => patchAll(["shape"], { hollow: all((e) => e.hollow === true) ? null : true })),
       button("点線", all((e) => e.dashed === true), () => patchAll(["shape"], { dashed: all((e) => e.dashed === true) ? null : true })),
     );
@@ -1147,33 +1168,30 @@ function renderBar(): void {
     // 書いていないときの既定。大きさは、文字が本文、図形は少し小さい 15px（一覧に無いので、選ばれていない状態で出す）
     const size = shared(texty.map((e) => e.size ?? (e.type === "text" ? "m" : null)));
     const align = shared(texty.map((e) => e.align ?? (e.type === "text" || (e.shape ?? "note") === "note" ? "left" : "center")));
-    bar.append(
+    add(
       picker("文字の大きさ", SIZES, SIZE_LABEL, size, (v) => patchAll(["text", "shape"], { size: v })),
       picker("文字の寄せ", ALIGNS, ALIGN_LABEL, align, (v) => patchAll(["text", "shape"], { align: v })),
     );
   }
   if (has("arrow")) {
     sep();
-    bar.append(button("点線", sel.every((e) => e.type !== "arrow" || e.dashed === true), () => patchAll(["arrow"], { dashed: !sel.every((e) => e.type !== "arrow" || e.dashed === true) })));
+    add(button("点線", sel.every((e) => e.type !== "arrow" || e.dashed === true), () => patchAll(["arrow"], { dashed: !sel.every((e) => e.type !== "arrow" || e.dashed === true) })));
     const elbow = sel.every((e) => e.type !== "arrow" || e.route === "elbow");
     // 折れ線をやめるときは、折れ目の位置も消す（まっすぐな線には意味が無い）
-    bar.append(button("折れ線", elbow, () => patchAll(["arrow"], elbow ? { route: null, bends: null } : { route: "elbow" })));
+    add(button("折れ線", elbow, () => patchAll(["arrow"], elbow ? { route: null, bends: null } : { route: "elbow" })));
     // 端ごとの形（startHead・endHead）が書かれていたら消して、ここで選んだ向きに合わせる
-    for (const h of HEADS) bar.append(button(HEADS_LABEL[h], sel.length === 1 && (first?.heads ?? "end") === h, () => patchAll(["arrow"], { heads: h, startHead: null, endHead: null })));
+    for (const h of HEADS) add(button(HEADS_LABEL[h], sel.length === 1 && (first?.heads ?? "end") === h, () => patchAll(["arrow"], { heads: h, startHead: null, endHead: null })));
   }
   if (sel.length === 1 && first?.type === "gantt") {
     sep();
     const unit = first.unit ?? "month";
     const bars = first.bars ?? [];
-    const pick = document.createElement("select");
-    pick.title = "目盛りの単位";
     const UNIT_LABEL: Record<(typeof GANTT_UNITS)[number], string> = { day: "日", week: "週", month: "月" };
-    for (const u of GANTT_UNITS) pick.append(new Option(UNIT_LABEL[u], u, false, u === unit));
-    pick.addEventListener("change", () => void setOps([{ id: first.id, patch: { unit: pick.value } }]));
+    const pick = picker("目盛りの単位", GANTT_UNITS, UNIT_LABEL, unit, (v) => void setOps([{ id: first.id, patch: { unit: v } }]));
     // 足す行は、表示している範囲の最初の目盛りに置く。人がそこから帯を動かして合わせる
     const tick = ganttLayout(first).ticks[0];
     const added: GanttBar | null = tick ? { name: "新しい行", start: formatDay(tick.from, unit === "month"), end: formatDay(tick.to, unit === "month") } : null;
-    bar.append(
+    add(
       pick,
       button("行＋", false, () => added && void setOps([{ id: first.id, patch: { bars: [...bars, added] } }])),
       button("行−", false, () => bars.length > 1 && void setOps([{ id: first.id, patch: { bars: bars.slice(0, -1) } }])),
@@ -1186,7 +1204,7 @@ function renderBar(): void {
     const blank = (n: number): string[] => Array.from({ length: n }, () => "");
     const pad = (r: string[]): string[] => [...r, ...blank(Math.max(0, cols - r.length))];
     const table = (patch: Record<string, unknown>): void => void setOps([{ id: first.id, patch }]);
-    bar.append(
+    add(
       button("行＋", false, () => table({ rows: [...rows, blank(cols)] })),
       button("行−", false, () => rows.length > 1 && table({ rows: rows.slice(0, -1) })),
       button("列＋", false, () => table({ rows: rows.map((r) => [...pad(r), ""]), ...(first.head ? { head: [...pad(first.head), ""] } : {}) })),
@@ -1194,11 +1212,11 @@ function renderBar(): void {
     );
   }
   sep();
-  bar.append(button("前面", false, () => reorder("front"), "前面へ（]）"), button("背面", false, () => reorder("back"), "背面へ（[）"));
+  add(button("前面", false, () => reorder("front"), "前面へ（]）"), button("背面", false, () => reorder("back"), "背面へ（[）"));
   sep();
-  bar.append(button("固定", false, () => void setOps(sel.map((e) => ({ id: e.id, patch: { locked: true } }))), "動かせず、消せないようにする"));
+  add(button("固定", false, () => void setOps(sel.map((e) => ({ id: e.id, patch: { locked: true } }))), "動かせず、消せないようにする"));
   sep();
-  bar.append(button("削除", false, () => void removeEls([...selection])));
+  add(button("削除", false, () => void removeEls([...selection])));
 }
 
 /** 選んだ要素を、前面か背面へ動かす */
@@ -1327,7 +1345,7 @@ function applyMarkup(kind: MarkupKind): void {
 
 function setTool(next: Tool): void {
   tool = next;
-  for (const b of document.querySelectorAll("#tools button")) b.classList.toggle("on", b.getAttribute("data-tool") === next);
+  for (const b of document.querySelectorAll("#tools button")) b.setAttribute("aria-pressed", String(b.getAttribute("data-tool") === next));
   stage.classList.toggle("tool-add", next !== "select");
 }
 
@@ -1822,8 +1840,13 @@ async function boot(): Promise<void> {
     return;
   }
   const es = new EventSource(`/api/events?${boardQuery}&client=${clientId}&${tokenQuery}`);
-  es.addEventListener("open", () => conn.classList.add("on"));
-  es.addEventListener("error", () => conn.classList.remove("on"));
+  // つながっている間は緑、切れている間は赤（index.html の初めの色）
+  const showConnected = (on: boolean): void => {
+    conn.classList.toggle("bg-success", on);
+    conn.classList.toggle("bg-destructive", !on);
+  };
+  es.addEventListener("open", () => showConnected(true));
+  es.addEventListener("error", () => showConnected(false));
   es.addEventListener("snapshot", (ev) => loadSnapshot(JSON.parse(ev.data)));
   es.addEventListener("claims", (ev) => renderClaims(JSON.parse(ev.data)));
   es.addEventListener("ops", (ev) => {

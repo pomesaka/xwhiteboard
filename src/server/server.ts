@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import tailwind from "bun-plugin-tailwind";
 import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
 import { checkBoard } from "../shared/check.ts";
 import { shoot } from "./shot.ts";
@@ -186,12 +187,27 @@ const MIME: Record<string, string> = {
   svg: "image/svg+xml",
 };
 
+/**
+ * Tailwind を通さずに、そのまま画面へ渡す CSS（テーマの値と、ボードの中身の描き方）。
+ * WHY 通さない: Tailwind は、変数を含む color-mix() に古いブラウザ向けの代わりの値を足して、元の式を @supports の中へ移す。
+ * 1 つの規則に color-mix() の宣言がいくつもあるテーマでは、元の式が最初の 1 つしか残らず、ほかは混ぜる前の色になった
+ * （tailwindcss 4.3.5 + bun-plugin-tailwind 0.1.2 で確認。--header-border が --header-foreground と同じ色になる）。
+ * どちらも utility を使わない素の CSS なので、通す必要が無い。
+ */
+const RAW_CSS = ["ui-design/themes/xwb.css", "xwb-theme.css", "board.css"];
+
 export async function startServer(port: number): Promise<void> {
   const clientDir = join(import.meta.dir, "../client");
   const built = await Bun.build({ entrypoints: [join(clientDir, "main.ts")], target: "browser" });
   const script = built.outputs[0];
   if (!built.success || !script) throw new Error(`画面のスクリプトを組み立てられない: ${built.logs.join("\n")}`);
   const appJs = await script.text();
+  // 操作の部品の CSS は、app.css を入口に Tailwind が作る（使っている utility だけが出る）
+  const styled = await Bun.build({ entrypoints: [join(clientDir, "app.css")], plugins: [tailwind] });
+  const sheet = styled.outputs[0];
+  if (!styled.success || !sheet) throw new Error(`画面の CSS を組み立てられない: ${styled.logs.join("\n")}`);
+  const raw = await Promise.all(RAW_CSS.map((name) => Bun.file(join(clientDir, name)).text()));
+  const appCss = [await sheet.text(), ...raw].join("\n");
   const origin = `http://127.0.0.1:${port}`;
   const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
 
@@ -226,7 +242,7 @@ export async function startServer(port: number): Promise<void> {
       case "GET /":
         return new Response(Bun.file(join(clientDir, "index.html")));
       case "GET /app.css":
-        return new Response(Bun.file(join(clientDir, "style.css")));
+        return new Response(appCss, { headers: { "content-type": "text/css; charset=utf-8" } });
       case "GET /app.js":
         return new Response(appJs, { headers: { "content-type": "text/javascript; charset=utf-8" } });
       case "GET /api/ping":

@@ -1,0 +1,113 @@
+/* 操作の部品の CSS の入口。サーバーの起動時に、bun-plugin-tailwind がこのファイルから utility を作る。
+ *
+ * WHY Tailwind の土台（preflight）を読まない: preflight は、行の高さ・箇条書きの印・画像の大きさなどの
+ * ブラウザの既定を書き換える。ボードの中身（board.css）はその既定の上で描いているので、読むと付箋や表の見た目が変わる。
+ * 操作の部品に要る最小の土台だけを、下に書く。 */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* utility を探す場所。画面を組み立てるのは index.html と main.ts */
+@source "./index.html";
+@source "./main.ts";
+/* WHY 除く: ボードの中身は、種類や部品の名前をそのまま class に持つ（container・table・grow）。
+ * 同じ名前の utility が出ると、中身に効いてしまう。container は画面の幅に合わせた max-width が付いて、
+ * 広いセクションが細くなった（tailwindcss 4.3.5 で、幅 1728px のボードの書き出しが変わることを確認）。
+ * board.css に class を足すときは、組み立てた /app.css に同じ名前の utility が出ていないかを確かめる */
+@source not inline("container table grow");
+
+/* ui-design から複製した、共通契約と Tailwind の対応表（書き換えない）。
+ * テーマの値（ui-design/themes/xwb.css・xwb-theme.css）とボードの中身（board.css）は、ここで読まない。
+ * サーバーが、Tailwind を通さずにそのまま後ろへつなぐ（理由は server.ts の RAW_CSS） */
+@import "./ui-design/tailwind/tokens.css";
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    /* utility の border-* は、幅を足すだけで線の種類を決めない。既定を「幅 0 の実線」にしておく */
+    border: 0 solid;
+  }
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    overscroll-behavior: none;
+  }
+  button,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+    background: none;
+  }
+  /* hidden 属性は、display を決める utility（flex など）より強くする */
+  [hidden] {
+    display: none !important;
+  }
+}
+
+/* ---- 操作の部品の決まり ----
+ * ツールバー・表示の操作・選択バーは、同じ「ボードの上に浮く墨色の帯」。同じ見た目を 1 か所で決める。 */
+
+/* 帯。位置は、使う場所で決める */
+@utility chrome-bar {
+  @apply flex items-center rounded-card bg-header text-caption text-header-foreground shadow-lg;
+}
+
+/* 帯の中のボタン。選んでいる道具と、効いている切り替えは aria-pressed で示す */
+@utility chrome-button {
+  @apply cursor-pointer rounded-field px-3 py-2 whitespace-nowrap text-header-muted-foreground;
+  &:hover {
+    @apply text-header-foreground;
+  }
+  &:focus-visible {
+    @apply focus-ring;
+  }
+  &[aria-pressed="true"] {
+    @apply bg-header-accent text-header-accent-foreground;
+  }
+  &:disabled {
+    @apply cursor-default disabled-dim;
+  }
+}
+
+/* 帯の中の選択（形、文字の大きさ、寄せ） */
+@utility chrome-select {
+  @apply cursor-pointer rounded-field bg-header-border px-2 py-2 text-header-foreground;
+  &:focus-visible {
+    @apply focus-ring;
+  }
+}
+
+/* 色を選ぶ丸。面と縁の色は、付箋と同じ変数（--el-bg・--el-bd）から取る */
+@utility chrome-swatch {
+  @apply size-5 flex-none cursor-pointer rounded-full border-2 p-0;
+  background: var(--el-bg);
+  border-color: var(--el-bd);
+  &:hover {
+    @apply scale-125;
+  }
+  &:focus-visible {
+    @apply focus-ring;
+  }
+}
+
+/* 蛍光ペンの色のボタンは、帯の色を面にする。墨色の丸は、帯の面と同じ色なので縁を明るくする */
+.chrome-swatch.hl-swatch {
+  --el-bg: var(--hl);
+  --el-bd: var(--header-border);
+}
+.chrome-swatch.c-ink {
+  --el-bd: var(--header-muted-foreground);
+}
+
+/* 書き出しの画面には、操作の部品を出さない */
+body.export .chrome-bar {
+  display: none;
+}

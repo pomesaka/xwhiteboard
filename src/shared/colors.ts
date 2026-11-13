@@ -1,10 +1,11 @@
 // 色の値。見た目の検査（check.ts）が、色どうしの近さを測るのに使う。
-// 画面の色は CSS（client/style.css の .c-* の --bg と、.hl-* の --hl）が決めている。ここは、その写し。
-// CSS の色を変えたら、ここも同じ値に直す。
+// 画面の色は CSS の変数（client/xwb-theme.css と client/ui-design/themes/xwb.css）が決めている。ここは、その写し。
+// WHY 写しを持つ: 検査は、画面を描かないサーバーと CLI で動く。CSS を読まずに色を比べられるようにする。
+// 2 つがずれたら test/colors.test.ts が落ちる。
 import type { Color } from "./model.ts";
 import type { MarkColor } from "./rich.ts";
 
-/** 図形の面の色（.c-* の --bg） */
+/** 図形の面の色（--note-<色>） */
 export const FILL: Record<Color, string> = {
   yellow: "#fff1a8",
   orange: "#ffd9b0",
@@ -19,7 +20,7 @@ export const FILL: Record<Color, string> = {
   ink: "#2b2a28",
 };
 
-/** 蛍光ペンの帯の色（.hl-* の --hl）。帯は不透明なので、どの地の上でも、この色のまま出る */
+/** 蛍光ペンの帯の色（--highlight-<色>）。帯は不透明なので、どの地の上でも、この色のまま出る */
 export const HIGHLIGHT: Record<MarkColor, string> = {
   yellow: "#ffee58",
   green: "#a8efb4",
@@ -28,11 +29,13 @@ export const HIGHLIGHT: Record<MarkColor, string> = {
   orange: "#ffc680",
 };
 
-
-/** ボードの地の色（--paper）と、表の地の色 */
+/** ボードの地の色（--background）と、表の地の色（--board-surface・--board-head） */
 export const PAPER = "#f6f3ec";
 export const TABLE_CELL = "#ffffff";
 export const TABLE_HEAD = "#ece8de";
+
+/** ボードの文字の色（--foreground）。絵（SVG）の currentColor に当てる */
+export const INK = "#2b2a28";
 
 function lab(hex: string): [number, number, number] {
   const channel = (i: number): number => {

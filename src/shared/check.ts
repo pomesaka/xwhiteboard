@@ -110,7 +110,7 @@ function segmentCrosses(a: Point, b: Point, box: Box): boolean {
 }
 
 /**
- * 図形の中の、文字が入る場所の大きさ。画面の CSS（style.css の .shape と .s-* の padding）に合わせてある。
+ * 図形の中の、文字が入る場所の大きさ。画面の CSS（board.css の .shape と .s-* の padding）に合わせてある。
  * 割合の padding は、CSS では幅を基準に決まる。
  */
 function innerSize(kind: ShapeKind, w: number, h: number): { w: number; h: number } {

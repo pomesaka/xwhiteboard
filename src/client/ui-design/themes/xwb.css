@@ -1,0 +1,143 @@
+/* xwb のテーマ。ui-design の themes/template.css を複製して、基本の色と書体を xwb のものにした。
+ * 紙の色の地に、濃い墨色の文字。操作の帯（ツールバー・選択バー）は墨色の面に紙色の文字。
+ * 共通契約の全 token を埋める。ボードの中身の色（付箋・蛍光ペン・ガントなど）は xwb-theme.css に置く。 */
+[data-theme="xwb"] {
+  color-scheme: light;
+
+  /* 1. Base: brand and page colors */
+  --background: #f6f3ec;
+  --foreground: #2b2a28;
+  --primary: #2b2a28;
+  --primary-foreground: #f6f3ec;
+  --destructive: #b3261e;
+  --success: #2f7d1c;
+  --warning: #a85a10;
+  --info: #2f6fed;
+  --ring: #2f6fed;
+  --selected-border: #2f6fed;
+  --chart-1: #1f5fbf;
+  --chart-2: #2f7d1c;
+  --chart-3: #5b3cc4;
+  --chart-4: #a85a10;
+  --chart-5: #b3261e;
+
+  /* 2. Derived: surfaces */
+  /* WHY 白: 付箋や表を載せる紙色の地の上で、コメントの欄と表を「紙の上の白い面」として見分ける */
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--card-foreground);
+  --secondary: color-mix(in srgb, var(--primary) 8%, var(--background));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 5%, var(--background));
+  /* WHY 74%: テンプレートの 66% だと、控えめな面（--muted）の上で 4.18:1 になり、4.5:1 に届かない */
+  --muted-foreground: color-mix(in srgb, var(--foreground) 74%, var(--background));
+  --accent: var(--secondary);
+  --accent-foreground: var(--secondary-foreground);
+  --border: color-mix(in srgb, var(--foreground) 16%, var(--background));
+  --input: color-mix(in srgb, var(--foreground) 48%, var(--background));
+  --reading-secondary: color-mix(in srgb, var(--foreground) 70%, var(--background));
+  --control-foreground: color-mix(in srgb, var(--primary) 85%, var(--foreground));
+
+  /* Derived: action states follow their base so service overrides propagate */
+  --primary-hover: color-mix(in srgb, var(--primary) 88%, var(--background));
+  --primary-pressed: color-mix(in srgb, var(--primary) 78%, var(--background));
+  --secondary-hover: color-mix(in srgb, var(--secondary) 92%, var(--secondary-foreground));
+  --secondary-pressed: color-mix(in srgb, var(--secondary) 86%, var(--secondary-foreground));
+  --destructive-foreground: #ffffff;
+  --destructive-hover: color-mix(in srgb, var(--destructive) 90%, var(--foreground));
+  --destructive-pressed: color-mix(in srgb, var(--destructive) 80%, var(--foreground));
+  --destructive-subtle: color-mix(in srgb, var(--destructive) 10%, var(--background));
+  --destructive-subtle-foreground: color-mix(in srgb, var(--destructive) 85%, var(--foreground));
+  --selected: color-mix(in srgb, var(--selected-border) 8%, transparent);
+  --selected-foreground: var(--foreground);
+  --success-foreground: var(--card);
+  --warning-foreground: var(--card);
+  --info-foreground: var(--card);
+
+  /* Derived: navigation bands */
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--card-foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  /* 操作の帯は、ボードの上に浮く墨色の面。選んでいる道具は、紙色の面に墨色の文字で示す */
+  --header: var(--primary);
+  --header-foreground: var(--primary-foreground);
+  --header-muted-foreground: color-mix(in srgb, var(--header-foreground) 78%, var(--header));
+  --header-accent: var(--primary-foreground);
+  --header-accent-foreground: var(--primary);
+  --header-border: color-mix(in srgb, var(--header-foreground) 25%, var(--header));
+
+  /* Derived: material */
+  --material-shadow: color-mix(in srgb, var(--foreground) 60%, black);
+  /* font: 日本語の議事録を読む画面なので、OS の日本語のゴシック体を先に並べる */
+  --font-sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-body: var(--font-sans);
+  --font-heading: var(--font-sans);
+  --font-control: var(--font-sans);
+
+  /* typography */
+  --text-body: 0.9375rem;
+  --text-body-line-height: 1.6;
+  --text-detail: 1rem;
+  --text-detail-line-height: 1.6;
+  --text-reading: 1.0625rem;
+  --text-reading-line-height: 1.8;
+  --text-caption: 0.8125rem;
+  --text-caption-line-height: 1.25rem;
+  --text-action: 0.875rem;
+  --text-action-line-height: 1.25rem;
+  --text-heading: 1.5rem;
+  --text-heading-line-height: 1.35;
+  --text-section: 1.125rem;
+  --text-section-line-height: 1.5;
+  --weight-body: 400;
+  --weight-heading: 600;
+  --weight-control: 500;
+
+  /* spacing: numeric utilities are multiples of space-1, so keep the scale linear */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --inset-panel: 1.25rem;
+  --inset-reading: 0.75rem;
+  --control-height: 2.75rem;
+  --control-hit-size: 2.75rem;
+  --icon-size: 1.25rem;
+  --icon-size-action: 1.125rem;
+
+  /* shape */
+  --radius: 0.625rem;
+  --radius-field: calc(var(--radius) * 0.75);
+  --radius-card: var(--radius);
+  --radius-dialog: calc(var(--radius) * 1.5);
+  --radius-drawer: calc(var(--radius) * 2);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--material-shadow) 10%, transparent);
+  --shadow-md: 0 2px 4px color-mix(in srgb, var(--material-shadow) 8%, transparent), 0 8px 20px -8px color-mix(in srgb, var(--material-shadow) 18%, transparent);
+  --shadow-lg: 0 4px 8px color-mix(in srgb, var(--material-shadow) 10%, transparent), 0 16px 40px -12px color-mix(in srgb, var(--material-shadow) 24%, transparent);
+
+  /* interaction */
+  --disabled-opacity: 0.5;
+  --press-depth: 1px;
+  --focus-outline-width: 2px;
+  --focus-outline-offset: 2px;
+
+  /* motion */
+  --duration-press: 0ms;
+  --duration-release: 160ms;
+  --duration-standard: 150ms;
+  --duration-expand: 200ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-release: ease-out;
+}

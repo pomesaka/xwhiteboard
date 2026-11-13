@@ -5,9 +5,10 @@
 // 安全について: 直した SVG は <img> の data URL として出す。<img> の中の SVG は、スクリプトを実行せず、外部の
 // ファイルも読まない（ブラウザの決まり）。マーカーの見た目では、そのうえで使える要素と属性を絞って組み直す。
 
+// WHY 変数でなく値: <img> の中の SVG には、ページの CSS の変数が届かない
+import { INK } from "../shared/colors.ts";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
-/** currentColor に当てる色。ボードの文字の色（style.css の --ink）と同じ値 */
-const INK = "#2b2a28";
 
 const SHAPES = ["path", "rect", "circle", "ellipse", "line", "polyline", "polygon"];
 const ELEMENTS = new Set(["svg", "g", ...SHAPES]);
