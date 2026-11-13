@@ -70,12 +70,15 @@ ui-designの`themes/template.css`から作った。移行前の見た目を変�
 
 中身の見た目は、6枚のボードを`xwb shot`で書き出して、移行前とPNGのバイト列が一致することを確かめた。操作の部品は、6つの状態を幅1280pxで撮って見比べた。面と文字の対16組は、テーマの値から計算して4.5:1（文字）と3:1（縁・輪）を満たす。
 
-`review`スキルの通しの確認と、利用者の5段階の評価は取っていない。
+`review`スキルでは、幅1280pxと768px、明るい配色、マウスでの操作を範囲にして確かめた。使うのは1人なので、キーボードだけでの操作・読み上げ・文字200%・幅390pxは範囲から外した。範囲の中の指摘（消える知らせ、選択バーの折り返し、空欄の選択、色の名前）は直してある。利用者の5段階の評価は取っていない。
 
 ## ui-designへ戻す改善
 
-- テーマをTailwindに通すと、`color-mix()`の宣言が1つの規則にいくつもあるとき、元の式が最初の1つしか残らない（tailwindcss 4.3.5 + bun-plugin-tailwind 0.1.2で確認。Viteでは未確認）。`docs/migration.md`は、テーマを`tokens.css`と同じ入口から読む形を案内している
-- Reactを使わない採用先の進め方が`setup`に無い。tokenとテーマだけを使うときに、何を複製し、部品の見た目を何で書くかの案内が要る
-- `contrast.mjs`はPlaywrightと専用のブラウザが入っていないと動かない。採用先に無いときの代わりの方法が無い
-- `inventory.mjs`は`--help`で使い方を出さずに終わる
-- Tailwindの`container`・`table`・`grow`は、同じ名前のclassを持つ既存の画面に効いてしまう。移行の型に、名前の衝突の確かめ方（`@source not inline(...)`）が無い
+導入で見つけた次の点は、ui-designの`efdf1e66`に入っている。
+
+- テーマを`bun-plugin-tailwind`に通すと`color-mix()`が失われること（`docs/migration.md`の「読み込み」）
+- Reactを使わない採用先の進め方（`skills/setup`）
+- 既存のclassと同じ名前のutilityの確かめ方（`docs/migration.md`の「名前の衝突」）
+- 中身が主の画面の決まり（`docs/composition.md`）と、`review`の確認の範囲
+
+`capture.mjs`と`contrast.mjs`は、導入済みのChromeで動くようになったと連絡を受けた。xwbではまだ実行していない。
