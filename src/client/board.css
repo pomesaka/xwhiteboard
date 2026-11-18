@@ -290,14 +290,14 @@
   text-overflow: ellipsis;
   cursor: grab;
 }
-/* 注目。話している議題のセクションと中身（lit）を残して、ほかを薄くする。矢印と手書きの線は、まとめて薄くする */
+/* 注目。薄くしない要素（lit。どれに付けるかは shared/focus.ts）を残して、ほかを薄くする。矢印と手書きの線は、まとめて薄くする */
 .focusing .el:not(.lit),
 .focusing #lines {
   opacity: 0.28;
   transition: opacity 0.2s;
 }
 /* WHY 墨色の太い枠: 選択の枠（青の細い線を、少し離して引く）と、色でも形でも見分けられるようにする */
-.focusing .container.lit {
+.focusing .container.focused {
   box-shadow: 0 0 0 4px var(--board-focus);
 }
 

@@ -17,10 +17,11 @@ BOARD="$DIR/v.board.json"
 URL=$(bin/xwb open "$BOARD" --no-open --title 確認 | jq -r .url)
 ```
 
+- シェルの変数は、Bashの呼び出しをまたいで残らない。起動から操作までを1つのスクリプトのファイルに書いて走らせる。`$URL`は、動いているサーバーに`bin/xwb open "$BOARD" --no-open`を打ち直せば、同じボードのものが取れる。
 - 既定のポート（4747）のサーバーは、会議で開いている画面がつながっていることがある。止めない、使わない。
 - サーバーは、起動したときの`src/client`と`src/server`、`src/shared`を使う。直した後は`bin/xwb stop`（同じ`XWB_PORT`で）してから開き直す。
 - `$URL`には、APIのトークンが`#k=…`で付いている。変数のまま使い、画面にも報告にもファイルにも出さない。出力に混ざるときは`sed -E 's/k=[A-Za-z0-9_-]+/k=…/g'`を通す。
-- 終わったら`bin/xwb stop`。`pkill`と`killall`は使わない。
+- 終わったら`bin/xwb stop`。`pkill`と`killall`は使わない。止めた直後は、ポートの待ち受けが数秒残る。同じポートで起動し直すなら、少し待つ。
 
 ## CLIから操作する
 
@@ -63,6 +64,8 @@ playwright-cli -s=xwbv close >/dev/null
 - ドラッグは`page.mouse.move`・`down`・`move(…, { steps: 8 })`・`up`。座標は`locator.boundingBox()`で取る（画面の座標）。
 - 選択バーは`#bar`の中。選択は`page.selectOption('#bar select[title="中身の並べ方"]', '2')`、ボタンは`page.click('#bar button:has-text("注目")')`。
 - 道具は`#tools button[data-tool=note]`など。表示の操作は`#fit`（全体）、`#undo`（戻す）、`#png`。
+- 画面どうしの同期（注目、人とエージェントが同時に触る流れ）は、セッションの名前を変えて画面を2つ開く（`-s=xwbv1`と`-s=xwbv2`）。
+- `run-code`が文字列を返すと、結果の行は引用符とエスケープが付いて出る。
 - 画面の状態とボードのファイルの両方を見る。画面だけが正しい、ファイルだけが正しい、のどちらもありうる。
 
 ## つつく価値のある流れ

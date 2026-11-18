@@ -6,6 +6,7 @@ import { svgSrc } from "./sketch.ts";
 import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, GANTT_ROW_H, GANTT_SCALE_H, GANTT_UNITS, dragBar, formatDay, ganttLayout, parseDay, type GanttBar } from "../shared/gantt.ts";
 import type { EndMark, ShapeKind } from "../shared/model.ts";
 import { dropMissing, restoreOps, withGeometry } from "../shared/restore.ts";
+import { focusLabel, keptOnFocus } from "../shared/focus.ts";
 
 const SVG_NS ="http://www.w3.org/2000/svg";
 const params = new URLSearchParams(location.search);
@@ -44,6 +45,8 @@ const bar = $("bar", HTMLElement);
 const toastNode = $("toast", HTMLElement);
 const pngButton = $("png", HTMLButtonElement);
 const undoButton = $("undo", HTMLButtonElement);
+const focusChip = $("focus", HTMLElement);
+const focusName = $("focusname", HTMLElement);
 const resolvedButton = $("resolved", HTMLButtonElement);
 
 type Tool = "select" | "note" | "shape" | "text" | "container" | "table" | "arrow" | "pen" | "comment";
@@ -388,6 +391,7 @@ function renderEl(el: El): void {
   if (selection.has(el.id)) cls.push("sel");
   if (flashing.has(el.id)) cls.push("flash");
   if (lit.has(el.id)) cls.push("lit");
+  if (focusId === el.id) cls.push("focused");
   if (el.locked) cls.push("locked");
   // 論点があるセクションでは、論点が見出しになり、題名は小さい分類の札になる
   if (el.type === "container" && el.question) cls.push("asking");
@@ -874,13 +878,25 @@ function fitFocus(): boolean {
   return box !== null;
 }
 
-/** 注目しているセクションと中身に印（lit）を付け、ほかを薄くする */
+/** 注目を移す、やめる（id が null）。サーバーが、開いている全部の画面へ知らせる */
+function sendFocus(id: string | null): void {
+  void api("/api/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ board: boardPath, id }) });
+}
+
+/** 薄くしない要素に印（lit）を、注目しているセクションに枠の印（focused）を付け、注目の札を出す */
 function applyFocus(): void {
-  const section = focusId === null ? undefined : els.get(focusId);
+  const kept = keptOnFocus([...els.values()], focusId);
+  const section = kept === null || focusId === null ? undefined : els.get(focusId);
   lit.clear();
-  if (section) for (const id of [section.id, ...membersOf(els.values(), section).map((m) => m.id)]) lit.add(id);
+  for (const id of kept ?? []) lit.add(id);
   world.classList.toggle("focusing", section !== undefined);
-  for (const [id, n] of nodes) n.classList.toggle("lit", lit.has(id));
+  for (const [id, n] of nodes) {
+    n.classList.toggle("lit", lit.has(id));
+    n.classList.toggle("focused", id === section?.id);
+  }
+  // WHY 札を出す: 薄くなっている理由が、注目したセクションが画面の外にあると分からない
+  focusChip.hidden = section === undefined;
+  if (section) focusName.textContent = `注目: ${focusLabel(section)}`;
 }
 
 function refresh(): void {
@@ -1319,7 +1335,7 @@ function renderBar(): void {
     const now = shared(sel.filter((e) => e.type === "container").map((e) => String(e.cols ?? 0)));
     if (sel.length === 1 && first?.type === "container") {
       const on = focusId === first.id;
-      add(button("注目", on, () => void api("/api/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ board: boardPath, id: on ? null : first.id }) }), "このセクションを残して、ほかを薄くする"));
+      add(button("注目", on, () => sendFocus(on ? null : first.id), "このセクションを残して、ほかを薄くする"));
     }
     if (sel.length === 1 && first?.type === "container") add(button("論点", false, () => editSectionField(first, "question"), "論点を書く"), button("結論", false, () => editSectionField(first, "answer"), "結論を書く"));
     add(picker("中身の並べ方", COLS_OPTIONS, COLS_LABEL, COLS_OPTIONS.find((o) => o === now) ?? null, (v) => patchAll(["container"], { cols: v === "0" ? null : Number(v) })));
@@ -1941,6 +1957,7 @@ $("zoomin", HTMLButtonElement).addEventListener("click", () => zoomAt(...center(
 $("zoomout", HTMLButtonElement).addEventListener("click", () => zoomAt(...center(), view.k / 1.25));
 $("fit", HTMLButtonElement).addEventListener("click", fit);
 undoButton.addEventListener("click", () => void undo());
+$("unfocus", HTMLButtonElement).addEventListener("click", () => sendFocus(null));
 // WHY mousedown を止める: 編集中に装飾のバーのボタンを押しても、編集中の欄からフォーカスを外さない
 // （外れると、その時点で編集が確定して、選んでいた範囲も失われる）
 bar.addEventListener("mousedown", (ev) => {
