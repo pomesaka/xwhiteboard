@@ -290,8 +290,9 @@
   text-overflow: ellipsis;
   cursor: grab;
 }
-/* 注目。薄くしない要素（lit。どれに付けるかは shared/focus.ts）を残して、ほかを薄くする。矢印と手書きの線は、まとめて薄くする */
-.focusing .el:not(.lit),
+/* 注目。薄くしない要素（lit。どれに付けるかは shared/focus.ts）を残して、ほかを薄くする。矢印と手書きの線は、まとめて薄くする
+   WHY 開いたコメントは薄くしない: やりとりの欄（.cpanel）はコメントの要素の中にあり、要素ごと薄くすると、読み書きしている欄まで白く透ける。開いているかは画面ごとの状態なので、focus.ts でなくここで見る */
+.focusing .el:not(.lit, .comment.open),
 .focusing #lines {
   opacity: 0.28;
   transition: opacity 0.2s;
