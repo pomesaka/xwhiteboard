@@ -1,6 +1,6 @@
 // ボードの見た目の問題を、描かずに測る。エージェントが、スクショを見なくても崩れに気づけるようにする。
 // 文字と表の大きさは見積もり（model.ts の sizeOf）なので、画面で測った値とは数 px ずれる。
-import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, membersOf, metaParts, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
+import { sectionTop, CARRIABLE, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, membersOf, metaParts, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
@@ -523,7 +523,8 @@ export function checkBoard(raw: Doc, ctx: CheckContext = {}): Issue[] {
     if (ctx.today !== undefined && isOverdue(el, ctx.today)) {
       issues.push({ kind: "overdue", ids: [el.id], message: `${el.id} の期限（${el.due}）を過ぎている。終わったなら due を消す（null）か、付箋を消す。延ばすなら due を直す` });
     }
-    if (el.carriedFrom === undefined && HANDWRITTEN_CARRIED.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
+    // WHY 決定と優先の付箋は見ない: carriedFrom と一緒に書けない状態なので、案内どおりに直すと断られる
+    if (el.carriedFrom === undefined && (el.status === undefined || CARRIABLE.includes(el.status)) && HANDWRITTEN_CARRIED.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
     if (el.status === undefined && HANDWRITTEN_STATUS.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（${NOTE_STATUS.join("・")}）。発言者は who に書く` });
     const metaOver = round(metaWidth(el) - innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0).w);
     if (metaOver > 0) issues.push({ kind: "meta-overflow", ids: [el.id], message: `${el.id} の札の段（状態の札、tag、期限、who）が 1 段に入りきらず、tag か who が切れる（${metaOver} はみ出す）。状態の札と期限は縮まない。tag を短くするか省く、who を短くする、w を増やす`, w: metaOver });

@@ -218,6 +218,10 @@ describe("付箋の欄", () => {
     ["持ち越しの日付: 本文の、「→」の後ろ", note({ text: "見積もり→11/11 から" }), ["handwritten-field:a"]],
     ["区切りの無い「M/D から」は、ふつうの文", note({ text: "4/1 から新体制で始める" }), []],
     ["分数の後ろの「から」は、ふつうの文", note({ text: "2/3 から 3/4 に上げる" }), []],
+    ["未決の付箋に手で書いた持ち越しの日付", note({ status: "open", text: "見積もり · 11/11 から" }), ["handwritten-field:a"]],
+    ["宿題の付箋に手で書いた持ち越しの日付", note({ status: "todo", text: "見積もり · 11/11 から" }), ["handwritten-field:a"]],
+    ["決定の付箋は見ない（carriedFrom と一緒に書けない）", note({ status: "decided", text: "見積もり · 11/11 から" }), []],
+    ["優先の付箋は見ない（carriedFrom と一緒に書けない）", note({ status: "priority", text: "見積もり · 11/11 から" }), []],
     ["carriedFrom があれば、日付は見ない", note({ text: "見積もり · 11/11 から", carriedFrom: "2026-11-11" }), []],
     ["札の状態: 状態の名前だけ", note({ tag: "決定", text: "見積もり" }), ["handwritten-field:a"]],
     ["札の状態: 後ろに「·」", note({ tag: "決定 · 竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
@@ -313,6 +317,8 @@ describe("付箋の欄", () => {
     // 持ち越しの宿題は、1 つの札「宿題11/11から」（92.2）
     ["持ち越しの宿題と期限と 3 文字の who（192.4）は入る", { status: "todo", carriedFrom: "2026-11-11", due: "2026-11-20", who: z(3) }, []],
     ["持ち越しの宿題と期限と 4 文字の who（202.9）は入りきらない", { status: "todo", carriedFrom: "2026-11-11", due: "2026-11-20", who: z(4) }, ["a:7"]],
+    ["持ち越しの未決と期限と 3 文字の who（192.4）は入る", { status: "open", carriedFrom: "2026-11-11", due: "2026-11-20", who: z(3) }, []],
+    ["持ち越しの未決と期限と 4 文字の who（202.9）は入りきらない", { status: "open", carriedFrom: "2026-11-11", due: "2026-11-20", who: z(4) }, ["a:7"]],
     ["宿題と期限と 9 文字の who（192.2）は入る", { status: "todo", due: "2026-11-20", who: z(9) }, []],
     ["幅 141 の付箋（内側 117）に、状態と tag と who は入りきらない", { status: "decided", tag: "事実", who: "担当 設楽", w: 141 }, ["a:7"]],
     ["幅 141 の付箋に、tag と who だけなら入る", { tag: "事実", who: "担当 設楽", w: 141 }, []],
@@ -385,6 +391,18 @@ describe("付箋の欄", () => {
     ["due があって、本文に期限が無ければ、何も言わない", { text: "見積もりを出す", due: "2026-11-20" }, []],
   ])("期限の手書き: %s", (_name, extra, expected) => {
     expect(handDue(extra)).toEqual(expected);
+  });
+
+  // 手で書いた持ち越しの日付の知らせどおりに、carriedFrom に書いて本文から消す。断られず、知らせが残らない
+  test.each([
+    ["状態の無い付箋", {}],
+    ["未決の付箋", { status: "open" }],
+    ["宿題の付箋", { status: "todo" }],
+    ["状態が持ち越しの付箋", { status: "carried" }],
+  ])("持ち越しの日付の知らせどおりに直すと、知らせが残らない: %s", (_name, extra) => {
+    const before = note({ text: "見積もり · 11/11 から", ...extra });
+    expect(check(before)).toEqual(["handwritten-field:a"]);
+    expect(check([...before, { op: "set", id: "a", patch: { text: "見積もり", carriedFrom: "2026-11-11" } }])).toEqual([]);
   });
 
   test("持ち越しの日付を carriedFrom に書けば、同じ日付の繰り返しにならない", () => {

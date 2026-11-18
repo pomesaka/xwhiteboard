@@ -80,6 +80,7 @@ describe("札の段に並ぶ部品", () => {
   test.each<[string, Partial<El>, string[]]>([
     ["何も無ければ、段が無い", { text: "本文" }, []],
     ["左から、状態の札、tag、期限、発言者", { status: "todo", tag: "営業", due: "2026-11-20", who: "竹内" }, ["status:宿題", "tag:営業", "due:〆11/20", "who:竹内"]],
+    ["持ち越しの未決も、状態の札が 1 つ", { status: "open", carriedFrom: "2026-11-11", who: "竹内" }, ["status:未決11/11から", "who:竹内"]],
     ["持ち越しの宿題は、状態の札が 1 つ", { status: "todo", carriedFrom: "2026-11-11", due: "2026-11-20", who: "竹内" }, ["status:宿題11/11から", "due:〆11/20", "who:竹内"]],
     ["期限だけ", { due: "2026-11-20" }, ["due:〆11/20"]],
     ["持ち越しの日付だけを書いた付箋と、期限", { carriedFrom: "2026-11-11", due: "2026-11-20" }, ["status:持ち越し 11/11", "due:〆11/20"]],
@@ -130,7 +131,10 @@ describe("状態の宿題（todo）", () => {
     ["持ち越しの宿題。1 つの札に、元の日付を付ける", { status: "todo", carriedFrom: "2026-11-11" }, { status: "todo", label: "宿題11/11から" }],
     ["持ち越しの宿題。日の頭の 0 は出さない", { status: "todo", carriedFrom: "2026-11-04" }, { status: "todo", label: "宿題11/4から" }],
     ["持ち越しの宿題。月までの日付", { status: "todo", carriedFrom: "2026-10" }, { status: "todo", label: "宿題10月から" }],
-    ["持ち越し（宿題でない）は、今までどおり", { status: "carried", carriedFrom: "2026-11-11" }, { status: "carried", label: "持ち越し 11/11" }],
+    ["持ち越しの未決。宿題と同じ形で、色は未決", { status: "open", carriedFrom: "2026-11-11" }, { status: "open", label: "未決11/11から" }],
+    ["持ち越しの未決。月までの日付", { status: "open", carriedFrom: "2026-10" }, { status: "open", label: "未決10月から" }],
+    ["未決（持ち越しでない）", { status: "open" }, { status: "open", label: "未決" }],
+    ["持ち越し（宿題でも未決でもない）は、今までどおり", { status: "carried", carriedFrom: "2026-11-11" }, { status: "carried", label: "持ち越し 11/11" }],
     ["日付だけを書くと、持ち越し", { carriedFrom: "2026-11-11" }, { status: "carried", label: "持ち越し 11/11" }],
   ])("札の文字: %s", (_name, extra, expected) => {
     const r = parseEl(note(extra));
@@ -140,11 +144,10 @@ describe("状態の宿題（todo）", () => {
 
   test.each([
     ["決定", "decided"],
-    ["未決", "open"],
     ["優先", "priority"],
   ])("%s の付箋には、持ち越しの日付を書けない", (_name, status) => {
     const r = parseEl(note({ status, carriedFrom: "2026-11-11" }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain("carriedFrom を書くなら、status は carried か todo か、書かない");
+    if (!r.ok) expect(r.error).toContain("carriedFrom を書くなら、status は carried か todo か open か、書かない");
   });
 });

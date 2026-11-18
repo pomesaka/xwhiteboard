@@ -1,4 +1,4 @@
-import { ALIGNS, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, SUMMARY_MIN_W, SUMMARY_W, TABLE_COL, dueLabel, isOverdue, localDay, metaParts, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
+import { ALIGNS, CARRIABLE, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, SUMMARY_MIN_W, SUMMARY_W, TABLE_COL, dueLabel, isOverdue, localDay, metaParts, shortDay, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
 
 import { LABEL_LIFT, arrowPath, labelSpot, routeArrow, type RouteEnd } from "../shared/route.ts";
 import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
@@ -557,6 +557,8 @@ function renderSummary(el: El, n: HTMLElement): void {
     const source = els.get(item.id);
     const due = source ? dueLabel(source) : null;
     // 書き出しの画面では、期限切れの色を付けない（付箋の札と同じ決まり）
+    // 持ち越しの日付。状態の札は行に出さないので、ここに出す
+    if (item.carriedFrom !== undefined) row.append(div("scarried", `${shortDay(item.carriedFrom)}から`));
     if (source && due) row.append(div(!exporting && isOverdue(source, today) ? "sdue overdue" : "sdue", due));
     if (item.who !== undefined) row.append(div("swho", item.who));
     n.append(row);
@@ -1362,8 +1364,8 @@ function renderBar(): void {
     // 形は数が多いので、ボタンを並べずに一覧から選ぶ
     add(
       picker("形", SHAPES, SHAPE_LABEL, shared(shapes.map((e) => e.shape ?? "note")), (v) => patchAll(["shape"], { shape: v })),
-      // 状態を外すときは、持ち越しの日付も消す（日付だけが残ると、持ち越しの札が出続ける）。持ち越しと宿題のほかの状態は、日付と一緒に書けない
-      picker("状態", STATUS_OPTIONS, STATUS_OPTION_LABEL, shared(shapes.map((e) => statusBadge(e)?.status ?? "none")), (v) => patchAll(["shape"], v === "none" ? { status: null, carriedFrom: null } : v === "carried" || v === "todo" ? { status: v } : { status: v, carriedFrom: null })),
+      // 状態を外すときは、持ち越しの日付も消す（日付だけが残ると、持ち越しの札が出続ける）。日付と一緒に書けない状態（決定、優先）を選んだときも消す
+      picker("状態", STATUS_OPTIONS, STATUS_OPTION_LABEL, shared(shapes.map((e) => statusBadge(e)?.status ?? "none")), (v) => patchAll(["shape"], v === "none" ? { status: null, carriedFrom: null } : CARRIABLE.some((s) => s === v) ? { status: v } : { status: v, carriedFrom: null })),
       button("塗りなし", all((e) => e.hollow === true), () => patchAll(["shape"], { hollow: all((e) => e.hollow === true) ? null : true })),
       button("点線", all((e) => e.dashed === true), () => patchAll(["shape"], { dashed: all((e) => e.dashed === true) ? null : true })),
     );

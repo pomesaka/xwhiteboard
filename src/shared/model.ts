@@ -16,6 +16,8 @@ export const ROUTES = ["straight", "elbow"] as const;
 /** 付箋の状態。決定、未決、持ち越し、優先 */
 export const NOTE_STATUS = ["decided", "open", "todo", "carried", "priority"] as const;
 export type NoteStatus = (typeof NOTE_STATUS)[number];
+/** 持ち越しの日付（carriedFrom）と一緒に書ける状態。決定と優先は、持ち越しにならない */
+export const CARRIABLE: readonly NoteStatus[] = ["carried", "todo", "open"];
 export const STATUS_LABEL: Record<NoteStatus, string> = { decided: "決定", open: "未決", todo: "宿題", carried: "持ち越し", priority: "優先" };
 /** 矢印の端の形。矢じり、丸、無し */
 export const END_MARKS = ["arrow", "dot", "none"] as const;
@@ -469,7 +471,7 @@ export function parseEl(raw: unknown): Res<El> {
   for (const k of REQUIRED[type]) {
     if (raw[k] === undefined) return fail(`${type} には ${k} が要る`);
   }
-  if (el.carriedFrom !== undefined && el.status !== undefined && el.status !== "carried" && el.status !== "todo") return fail("carriedFrom を書くなら、status は carried か todo か、書かない");
+  if (el.carriedFrom !== undefined && el.status !== undefined && !isOneOf(CARRIABLE, el.status)) return fail("carriedFrom を書くなら、status は carried か todo か open か、書かない");
   if (type === "image" && (el.src === undefined) === (el.svg === undefined)) return fail("image には src か svg のどちらか 1 つを書く");
   if (type === "summary") {
     if (el.w !== undefined && el.w < SUMMARY_MIN_W) return fail(`summary の w は ${SUMMARY_MIN_W} 以上（行の文字が入らない）`);
@@ -480,17 +482,23 @@ export function parseEl(raw: unknown): Res<El> {
 
 /**
  * 付箋の状態の札に出す文字。状態が無ければ null。持ち越しには、元の日付を付ける（「持ち越し 11/11」。月までの日付は「持ち越し 11月」）。
- * 持ち越しの宿題（status が todo で、carriedFrom がある）は、1 つの札に「宿題11/11から」と出す。
+ * 持ち越しの宿題と未決（status が todo か open で、carriedFrom がある）は、1 つの札に「宿題11/11から」「未決11/11から」と出す。
  * WHY 短く書く: 札の段は 1 段で、tag と期限と発言者も同じ段に並ぶ。「持ち越し · 11/11 から」と書くと、幅 220 の付箋で発言者が切れる。
  * 宿題と持ち越しを 2 つの札に分けると、期限と発言者が入らない
  */
 export function statusBadge(el: El): { status: NoteStatus; label: string } | null {
   const status = el.status ?? (el.carriedFrom === undefined ? undefined : "carried");
   if (status === undefined) return null;
-  const [, month, day] = (el.carriedFrom ?? "").split("-").map(Number);
-  const date = month === undefined ? "" : day === undefined ? `${month}月` : `${month}/${day}`;
-  const from = date === "" ? "" : status === "todo" ? `${date}から` : ` ${date}`;
+  const date = el.carriedFrom === undefined ? "" : shortDay(el.carriedFrom);
+  // 持ち越し（carried）は「持ち越し 11/11」。持ち越しの宿題と未決は、状態の名前に「11/11から」を続ける
+  const from = date === "" ? "" : status === "carried" ? ` ${date}` : `${date}から`;
   return { status, label: STATUS_LABEL[status] + from };
+}
+
+/** 日付（YYYY-MM-DD か YYYY-MM）の、年を出さない短い書き方。「11/20」、月までの日付は「11月」。札の段と、まとめの帯の行に使う */
+export function shortDay(date: string): string {
+  const [, month, day] = date.split("-").map(Number);
+  return day === undefined ? `${month}月` : `${month}/${day}`;
 }
 
 /**
@@ -499,9 +507,7 @@ export function statusBadge(el: El): { status: NoteStatus; label: string } | nul
  * 「期限 11/20」と書くと、幅 220 の付箋で「持ち越し 11/11」と発言者の札と並ばない
  */
 export function dueLabel(el: El): string | null {
-  if (el.due === undefined) return null;
-  const [, month, day] = el.due.split("-").map(Number);
-  return day === undefined ? `〆${month}月` : `〆${month}/${day}`;
+  return el.due === undefined ? null : `〆${shortDay(el.due)}`;
 }
 
 /** 付箋の札の段に並ぶ部品。status は、状態の札の色を決める状態 */

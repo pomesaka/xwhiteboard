@@ -84,6 +84,7 @@ describe("帯が集める付箋", () => {
     ["持ち越しの日付だけを書いた付箋は、持ち越し", { carriedFrom: "2026-11-11" }, { carried: ["a"] }],
     ["状態が持ち越しで、日付もある付箋は、持ち越しに 1 回だけ", { status: "carried", carriedFrom: "2026-11-11" }, { carried: ["a"] }],
     ["持ち越しの宿題は、宿題にだけ出る", { status: "todo", carriedFrom: "2026-11-11" }, { todo: ["a"] }],
+    ["持ち越しの未決は、未決にだけ出る", { status: "open", carriedFrom: "2026-11-11" }, { open: ["a"] }],
     ["状態も持ち越しの日付も無い付箋は、どこにも出ない", { text: "ふつうの付箋" }, {}],
     ["付箋でない図形も、状態があれば出る", { shape: "rect", status: "open" }, { open: ["a"] }],
   ])("%s", (_name, extra, expected) => {

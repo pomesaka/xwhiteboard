@@ -520,6 +520,7 @@
   font-weight: 700;
   color: var(--board-text-faint);
 }
+.summary .scarried,
 .summary .sdue,
 .summary .swho {
   flex: none;
