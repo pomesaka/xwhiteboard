@@ -3,6 +3,7 @@
 import { GANTT_STATUS, GANTT_UNITS, ganttLayout, parseDay, type GanttBar, type GanttMark, type GanttSegment, type GanttUnit } from "./gantt.ts";
 import { isBoardRef, plainText } from "./rich.ts";
 import { formatOp } from "./format.ts";
+import { itemsOf, summarize } from "./summary.ts";
 import { expandTemplate } from "./template.ts";
 import { SIDES, type Side } from "./route.ts";
 
@@ -187,7 +188,7 @@ const REQUIRED: Record<ElType, readonly string[]> = {
   table: ["x", "y", "rows"],
   image: ["x", "y", "w", "h"],
   stroke: ["points"],
-  summary: ["x", "y", "show"],
+  summary: ["show"],
 };
 
 /**
@@ -474,10 +475,7 @@ export function parseEl(raw: unknown): Res<El> {
   }
   if (el.carriedFrom !== undefined && el.status !== undefined && !isOneOf(CARRIABLE, el.status)) return fail("carriedFrom を書くなら、status は carried か todo か open か、書かない");
   if (type === "image" && (el.src === undefined) === (el.svg === undefined)) return fail("image には src か svg のどちらか 1 つを書く");
-  if (type === "summary") {
-    if (el.w !== undefined && el.w < SUMMARY_MIN_W) return fail(`summary の w は ${SUMMARY_MIN_W} 以上（行の文字が入らない）`);
-    delete el.h;
-  }
+  if (type === "summary" && el.w !== undefined && el.w < SUMMARY_MIN_W) return fail(`summary の w は ${SUMMARY_MIN_W} 以上（行の文字が入らない）`);
   return ok(el);
 }
 
@@ -723,7 +721,7 @@ export function sizeOf(el: El): { w: number; h: number } {
       return { w: layout.w, h: layout.h };
     }
     case "summary":
-      // 高さは、集めた行の数から決まる（summary.ts の withSummaryHeights が h に入れる）。まだ入っていなければ、1 行ぶん
+      // 高さは、集めた行の数から決まる。操作のまとまりの最後に、applyOps（settleSummaries）が h に書く。まだ書かれていなければ、1 行ぶん
       return { w: el.w ?? SUMMARY_W, h: el.h ?? summaryHeight(1) };
     default:
       return { w: el.w ?? 0, h: el.h ?? 0 };
@@ -1047,6 +1045,73 @@ function arrangeCols(els: readonly El[], kept: ReadonlyMap<string, readonly stri
   return { els: work, changed: [...changed], reordered };
 }
 
+/**
+ * まとめの帯の高さ（h）を、集めた行の数に合わせ、高さが変わったぶんだけ、下にあるものを動かす。伸びたら下げ、縮んだら上げる。
+ * 動かす相手は、押し下げ（growthPush）と同じ選び方。帯の、変わる前の下の端より下から始まり、横が重なるまとまりのうち、いちばん上のものの高さから下を、横の列も含めて全部。
+ * 動かす量は、「動かす相手の先頭の段（いちばん上の高さから始まるまとまり）の上にあって、横が重なる、動かさない要素（帯、セクション、場所をふさぐ要素）の、
+ * いちばん下の端」が変わったぶん。
+ * WHY 帯ごとの伸び縮みで動かさない: 帯は横に並べて置く（決定事項、ToDo、未決）。背の低い帯が 1 行伸びるたびに下を動かすと、いちばん背の高い帯と下の段の間が、
+ * ほかの帯の行の数で変わる。いちばん下の端を基準にすれば、その端と下の段の間が保たれ、行が元の数に戻れば、下の段も元の場所に戻る。
+ * いちばん下の端が変わらなくても、伸びた帯が、すぐ下の相手に重なるときは、重ならない所まで下げる（前から、ほかの要素と重なって置かれていた相手に起きる）
+ */
+function settleSummaries(els: readonly El[]): { els: El[]; changed: string[] } {
+  if (!els.some((e) => e.type === "summary")) return { els: [...els], changed: [] };
+  const rows = summarize(els);
+  const work = [...els];
+  const index = new Map(work.map((e, i) => [e.id, i]));
+  const changed = new Set<string>();
+  const put = (next: El): void => {
+    const i = index.get(next.id);
+    if (i === undefined) return;
+    work[i] = next;
+    changed.add(next.id);
+  };
+  for (const { id } of els.filter((e) => e.type === "summary")) {
+    // 先に見た帯が、この帯を動かしていることがあるので、今の形を読み直す
+    const band = work[index.get(id) ?? -1];
+    const h = band ? summaryHeight(itemsOf(rows, band).length) : 0;
+    if (!band || band.h === h) continue;
+    // 高さの無い帯（前の版で書いた帯）は、高さを書くだけで、下は動かさない。
+    // WHY: 前の版は高さを書かなかったので、書かれていた配置は、今の行の数の高さに合わせて置かれている（帯の下を、行のぶん空けてある）
+    if (band.h === undefined) {
+      put({ ...band, h });
+      continue;
+    }
+    const before = boxOf(band);
+    // WHY 帯を書き換える前にまとまりを取る: まとまりは、中心がセクションの中にあるかで中身を見分ける
+    const others = unitsOf(work).flatMap((u) => (u.head === id ? [] : [{ ...u, ids: u.ids.filter((i) => i !== id) }]));
+    put({ ...band, h });
+    if (!before) continue;
+    const after = { ...before, h };
+    const bottom = before.y + before.h;
+    const across = (a: Box, b: Box): boolean => a.x < b.x + b.w && b.x < a.x + a.w;
+    const starts = others.filter((u) => u.box.y >= bottom && across(u.box, after));
+    if (starts.length === 0) continue;
+    const threshold = Math.min(...starts.map((u) => u.box.y));
+    const moving = others.filter((u) => u.box.y >= threshold);
+    // 先頭の段は、動かす相手のうち、いちばん上の高さから始まるもの全部（帯と横が重ならない列のものも）
+    const front = moving.filter((u) => u.box.y === threshold);
+    const isBand = (u: Unit): boolean => work[index.get(u.head) ?? -1]?.type === "summary";
+    // 基準の端に入れるのは、伸び縮みした帯と、先頭の段の上にあって、先頭の段と横が重なる、ほかの帯だけ。
+    // WHY 帯でない要素を入れない: 帯の横の、関係の無い列の要素（下の端が深い付箋やセクション）が入ると、帯が伸びても下が動かなくなる。
+    // 帯と下の相手の間にある帯でない要素は、動かす相手に入るので、基準に要らない
+    const above = others.filter((u) => u.box.y < threshold && isBand(u) && front.some((f) => across(u.box, f.box)));
+    const edge = (own: Box): number => Math.max(own.y + own.h, ...above.map((u) => u.box.y + u.box.h));
+    const byEdge = edge(after) - edge(before);
+    // 上げるときは、いちばん下の端より上へは上げず、動かさない要素（線・コメント・座標の矢印のほか）に重なる所の手前で止める
+    const blocking = others.filter((u) => u.box.y < threshold && (u.kind !== "other" || isBand(u)));
+    const room = Math.max(-Infinity, ...moving.flatMap((m) => blocking.filter((o) => across(o.box, m.box) && o.box.y < m.box.y).map((o) => o.box.y + o.box.h - m.box.y)));
+    const dy = h > before.h ? Math.max(byEdge, after.y + after.h - threshold, 0) : Math.max(byEdge, Math.min(0, edge(after) - threshold), Math.min(0, room));
+    if (dy === 0) continue;
+    const moved = new Set(moving.flatMap((u) => u.ids));
+    // 動かした要素を指しているコメントは、一緒に動かす
+    for (const el of [...work]) {
+      if (moved.has(el.id) || (el.type === "comment" && el.on !== undefined && moved.has(el.on))) put(shifted(el, 0, dy));
+    }
+  }
+  return { els: work, changed: [...changed] };
+}
+
 /** セクションの中で、左上から順に、ほかの中身と重ならない最初の場所を返す */
 function placeInside(els: El[], container: El, size: { w: number; h: number }): Point {
   const c = boxOf(container) ?? { x: 0, y: 0, w: 0, h: 0 };
@@ -1084,7 +1149,7 @@ export interface Applied {
   order?: string[];
 }
 
-const NEEDS_PLACE: readonly ElType[] = ["shape", "container", "text", "table", "image", "gantt"];
+const NEEDS_PLACE: readonly ElType[] = ["shape", "container", "text", "table", "image", "gantt", "summary"];
 
 /** 操作をした人と時刻。コメントのやりとり（say）に書き込む */
 export interface OpsContext {
@@ -1219,12 +1284,14 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
    */
   const sited = new Map<string, string>();
 
-  /** 列で並べるセクションを並べ直す。位置を読む操作の前と、まとまりの最後に呼ぶ */
+  /** 列で並べるセクションを並べ直し、まとめの帯の高さを合わせる。位置を読む操作の前と、まとまりの最後に呼ぶ */
   const settle = (): void => {
     const r = arrangeCols(doc.elements, kept, placed);
-    doc.elements = r.els;
-    for (const el of r.els) byId.set(el.id, el);
-    for (const id of r.changed) touch(id);
+    // WHY 並べ直しの後: 並べ直しで伸びたセクションが、帯を押し下げていることがある。帯の高さは、付箋の状態だけで決まり、並べ直しでは変わらない
+    const s = settleSummaries(r.els);
+    doc.elements = s.els;
+    for (const el of s.els) byId.set(el.id, el);
+    for (const id of [...r.changed, ...s.changed]) touch(id);
     reordered ||= r.reordered;
     kept.clear();
     placed.clear();
@@ -1275,6 +1342,14 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         if (def) {
           raw.w ??= def.w;
           raw.h ??= def.h;
+        }
+        if (type === "summary") {
+          raw.w ??= SUMMARY_W;
+          // まとめの帯の高さは、集めた行の数から決まる。書かれた h は使わず、今の行の数からの高さにする。
+          // WHY: 書かれた h を変わる前の高さと読むと、まとまりの最後に、下にあるものを、行の数と関係ない量だけ動かす。
+          // 足す時点で高さを入れるのは、場所を書かない add と above が、本当の大きさで場所を決めるため
+          raw.h = isOneOf(NOTE_STATUS, raw.show) ? summaryHeight(summarize(doc.elements)[raw.show].length) : summaryHeight(0);
+          if (op.in !== undefined) return fail(`${at}: まとめの帯（summary）は、in でセクションに足せない。セクションの外に置く（x・y を書くか、何も書かずに全体の右へ置く）`);
         }
         let grown: El | null = null;
         // 置いた後に下へずらすもの。新しい要素を入れる前のまとまりで決める（新しい要素が、重なった先の中身に数えられないように）
@@ -1356,6 +1431,11 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         // 列で並べるセクションの高さは、中身から決まる。set で書かれた h は捨てる（cols を初めて書く set でも同じ）。
         // WHY: 書かれた h で枠を広げると、並べ直しが、下にあった外の要素を中身と読む
         if (r.value.cols !== undefined) r.value.h = el.h;
+        // まとめの帯の高さも同じ（集めた行の数から決まる）。今の h のままにして、まとまりの最後に合わせる
+        if (r.value.type === "summary") {
+          if (el.h === undefined) delete r.value.h;
+          else r.value.h = el.h;
+        }
         const before = el.type === "container" ? boxOf(el) : null;
         const after = boxOf(r.value);
         if (before && after && (before.x !== after.x || before.y !== after.y || before.w !== after.w || (el.cols === undefined && r.value.cols !== undefined))) sited.set(el.id, at);
@@ -1562,10 +1642,51 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
           }
           const r = parseEl(merged);
           if (!r.ok) return fail(`${at}: ${r.error}`);
+          // まとめの帯の高さは、書かない（add・set と同じ）。いつも、集めた行の数から決まる。
+          // WHY: 操作を積んだ後に行の数が変わっていると、戻す前の高さを書いた後の並べ直しが、伸びたと読んで、下をもう一度押し下げる
+          if (r.value.type === "summary") {
+            if (el.h === undefined) delete r.value.h;
+            else r.value.h = el.h;
+          }
           replace(r.value);
           touch(el.id);
           written.add(el.id);
           if ("x" in item.patch || "y" in item.patch) sitedHere.add(el.id);
+        }
+        // まとめの帯の高さを、戻した付箋の状態からの行の数に合わせる。下は動かさない（戻す操作が、動いた要素の場所を書いている）。
+        // WHY ここで合わせる: まとまりの最後の並べ直しに任せると、高さの変わったぶん、戻した場所から、下をもう一度動かす
+        const rows = summarize(doc.elements);
+        /** 帯の id ごとの、高さを合わせる前の高さ。伸びた帯だけ */
+        const grown = new Map<string, number>();
+        for (const band of doc.elements.filter((e) => e.type === "summary")) {
+          const h = summaryHeight(itemsOf(rows, band).length);
+          if (band.h === h) continue;
+          if (band.h !== undefined && h > band.h) grown.set(band.id, band.h);
+          replace({ ...band, h });
+          touch(band.id);
+        }
+        // 下の要素に重なる帯は、重なった要素から下を押し下げる。見るのは、次の 2 つ。
+        // 場所を書いて戻した帯（足し直した帯は除く）: 戻した場所で、帯の上の端より下から始まる要素。
+        // WHY: 操作を積んだ後に、帯の行が増えていることがある（人が帯を動かしている間に、エージェントが付箋の状態を変える）。
+        // 帯が元の場所にいなかったので、下は押し下げられていない。そのまま戻すと、伸びた帯が下に重なる。
+        // 伸びた帯: 伸びる前の下の端より下から始まる要素。WHY: 足し直した帯が、消した後に増えた行のぶん伸びることがある。
+        // 伸びる前の下の端より上は見ない。前から重ねて置かれていた要素まで押し下げると、元に戻らない。
+        // 戻す操作が場所を書いた要素は、もう書いた場所にあるので、重ならなければ動かない
+        const readded = new Set(back.map((e) => e.id));
+        for (const id of new Set([...[...sitedHere].filter((x) => !readded.has(x)), ...grown.keys()])) {
+          const band = byId.get(id);
+          const bb = band?.type === "summary" ? boxOf(band) : null;
+          if (!bb) continue;
+          // 場所を戻した帯は、上の端が同じ要素も見る（その間に、帯の空けた場所へ、エージェントが上をそろえて要素を足していることがある）
+          const from = sitedHere.has(id) && !readded.has(id) ? bb.y : bb.y + (grown.get(id) ?? 0);
+          const others = unitsBut(id);
+          const inside = others.filter((u) => (u.kind !== "other" || byId.get(u.head)?.type === "summary") && u.box.y >= from && u.box.y < bb.y + bb.h && u.box.x < bb.x + bb.w && bb.x < u.box.x + u.box.w);
+          if (inside.length === 0) continue;
+          // いちばん上の重なった要素の高さから下を、帯の下の端から OUTER_GAP 空けた所へ、段ごと押し下げる（growthPush と同じ）。
+          // ただし、帯の上の端と同じか上から始まり、帯と横が重ならない要素（帯の横に並ぶ、ほかの帯など）は、帯と同じ段に並んでいるので動かさない
+          const top = Math.min(...inside.map((u) => u.box.y));
+          const across = (u: Unit): boolean => u.box.x < bb.x + bb.w && bb.x < u.box.x + u.box.w;
+          pushDown({ units: others.filter((u) => u.box.y >= top && (u.box.y > bb.y || across(u))), dy: bb.y + bb.h + OUTER_GAP - top });
         }
         // members に書いた要素のうち、この操作が場所を書いた要素と、直前もそのセクションの中身だった要素。
         // WHY 絞る: 積んだ後にエージェントが別の場所へ動かした要素を、大きさを戻すだけの操作が、前のセクションへ引き戻さない

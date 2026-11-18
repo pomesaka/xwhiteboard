@@ -4,7 +4,6 @@ import { sectionTop, CARRIABLE, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FON
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
-import { withSummaryHeights } from "./summary.ts";
 import { bareUrls, isBoardRef, parseRich, plainText, type MarkColor } from "./rich.ts";
 import { LABEL_FONT, LABEL_LIFT, arrowPath, labelSpot } from "./route.ts";
 
@@ -379,9 +378,7 @@ function summaryIssues(doc: Doc): Issue[] {
   return issues;
 }
 
-export function checkBoard(raw: Doc, ctx: CheckContext = {}): Issue[] {
-  // まとめの帯の高さは、ほかの付箋の状態で決まる。重なりを測る前に、今の行の数からの高さを入れる
-  const doc: Doc = { ...raw, elements: withSummaryHeights(raw.elements) };
+export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
   const issues: Issue[] = [];
   issues.push(...summaryIssues(doc));
   // リンクの形で書いていない URL。画面ではただの文字で出て、押せない

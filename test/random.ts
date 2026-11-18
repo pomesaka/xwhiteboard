@@ -1,7 +1,7 @@
 // 乱数で、ボードと操作を作る。テスト（fuzz.test.ts）だけが使う。種が同じなら、同じ並びになる。
-import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf, PAD, sectionTop, type Box, type Doc, type El, type Point } from "../src/shared/model.ts";
+import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf, PAD, sectionTop, summaryHeight, type Box, type Doc, type El, type Point } from "../src/shared/model.ts";
 import { planFormat } from "../src/shared/format.ts";
-import { withSummaryHeights } from "../src/shared/summary.ts";
+import { itemsOf, summarize } from "../src/shared/summary.ts";
 import { add, drag, resize, rm, setOps, type Gesture, type Op } from "./screen.ts";
 
 export type Rng = () => number;
@@ -25,10 +25,18 @@ function pick<T>(r: Rng, xs: readonly T[]): T {
 }
 const int = (r: Rng, lo: number, hi: number, step = 1): number => lo + Math.floor((r() * (hi - lo)) / step) * step;
 
+const STATUSES = ["decided", "open", "todo", "carried", "priority"] as const;
+/** 付箋の状態。まとめの帯が集める。3 割の付箋に付ける。宿題と未決の半分は、持ち越しの日付つき */
+function status(r: Rng): Op {
+  if (r() >= 0.3) return {};
+  const s = pick(r, STATUSES);
+  return { status: s, ...((s === "todo" || s === "open") && r() < 0.5 ? { carriedFrom: "2026-11-11" } : {}) };
+}
+
 /** 場所をふさぐ要素の中身（付箋、文字、表、画像） */
 function solid(r: Rng): Op {
   const k = r();
-  if (k < 0.6) return { type: "shape", text: "付箋", ...(r() < 0.5 ? { h: pick(r, [40, 60, 110, 200, 300]) } : {}), ...(r() < 0.3 ? { w: pick(r, [90, 220, 400]) } : {}) };
+  if (k < 0.6) return { type: "shape", text: "付箋", ...(r() < 0.5 ? { h: pick(r, [40, 60, 110, 200, 300]) } : {}), ...(r() < 0.3 ? { w: pick(r, [90, 220, 400]) } : {}), ...status(r) };
   if (k < 0.75) return { type: "text", text: pick(r, ["x", "長い文字の行を書く。折り返すかもしれない長さにする", "a\nb\nc"]) };
   if (k < 0.9) return { type: "table", rows: Array.from({ length: int(r, 1, 5) }, (_, i) => [String(i), "x"]) };
   return { type: "image", src: "x.png", w: pick(r, [100, 400]), h: pick(r, [100, 300]) };
@@ -43,6 +51,7 @@ function must(doc: Doc, ops: Op[]): Doc {
 /**
  * ボードを作る。セクションを、重ならない格子（最大 3×3）に置き、7 割に cols を書く。
  * 半分のボードは、セクションの間を詰めて置く（押し下げが起きやすい）。外の要素、コメント、線、矢印も混ぜる。
+ * 6 割のボードには、まとめの帯を 1〜3 つ、セクションの上に横に並べて置く。
  */
 export function board(r: Rng): Doc {
   let doc = emptyDoc("t");
@@ -74,6 +83,18 @@ export function board(r: Rng): Doc {
     if (s) return { x: (s.x ?? 0) + int(r, -60, (s.w ?? 0) + 60, 10), y: (s.y ?? 0) + (s.h ?? 0) + int(r, 0, 200, 10) };
     return { x: int(r, 0, 2400, 10), y: int(r, 0, 1800, 10) };
   };
+  // まとめの帯。セクションの上に、間を空けて横に並べる。集める付箋が多ければ、足したときに伸びて、下を押し下げる
+  if (r() < 0.6) {
+    const gap = pick(r, [60, 60, 120, 300]);
+    const count = int(r, 1, 4);
+    // 帯の高さは、足した時点の行の数で決まる。足した後の高さを読んで、下の端とセクションの間を gap にする
+    for (let i = 0; i < count; i++) {
+      const id = `b${i}`;
+      doc = must(doc, [{ op: "add", el: { id, type: "summary", show: pick(r, STATUSES), x: i * 540, y: -5000, ...(r() < 0.3 ? { w: pick(r, [300, 500]) } : {}) } }]);
+      const h = doc.elements.find((e) => e.id === id)?.h ?? 92;
+      doc = must(doc, [{ op: "set", id, patch: { y: -h - gap } }]);
+    }
+  }
   const extras = int(r, 0, 6);
   for (let i = 0; i < extras; i++) {
     const q = r();
@@ -136,6 +157,8 @@ export function gesture(r: Rng, doc: Doc, n: number): Gesture | null {
   }
   if (k < 0.87 && secs.length > 0) return setOps(doc, [{ id: pick(r, secs).id, patch: { cols: r() < 0.25 ? null : int(r, 1, 9) } }], "cols");
   const el = pick(r, els);
+  // 付箋の状態を変える（選択バーの「状態」）。まとめの帯の行が増減する
+  if (el.type === "shape" && r() < 0.6) return setOps(doc, [{ id: el.id, patch: r() < 0.25 ? { status: null, carriedFrom: null } : { status: pick(r, STATUSES), carriedFrom: null } }], "status");
   if (el.type === "shape" || el.type === "text") return setOps(doc, [{ id: el.id, patch: { text: pick(r, ["短い", "長い文字の行を書く。折り返すかもしれない長さにする。もっと長くして行を増やす", "a\nb\nc\nd\ne\nf"]) } }], "text");
   if (el.type === "table") return setOps(doc, [{ id: el.id, patch: { rows: r() < 0.5 ? [...(el.rows ?? []), ["", ""]] : (el.rows ?? []).slice(0, -1) } }], "rows");
   if (el.type === "container") return setOps(doc, [{ id: el.id, patch: { [pick(r, ["question", "answer"])]: r() < 0.4 ? null : "決めることは何か。長い論点を書いて行を増やす" } }], "question");
@@ -174,7 +197,9 @@ export function agentOp(r: Rng, doc: Doc, n: number): Op {
   if (k < 0.42) return { op: "add", el: { id, ...solid(r), ...pos() } };
   if (k < 0.45) return { op: "add", above: pick(r, ids), el: { id, ...solid(r) } };
   if (k < 0.48) return { op: "add", el: { id, ...solid(r) } };
-  if (k < 0.52) return { op: "add", el: { id, type: "comment", ...pos(), ...(r() < 0.5 && solids.length > 0 ? { on: pick(r, solids).id } : { w: 60, h: 60 }) } };
+  if (k < 0.5) return { op: "add", el: { id, type: "comment", ...pos(), ...(r() < 0.5 && solids.length > 0 ? { on: pick(r, solids).id } : { w: 60, h: 60 }) } };
+  // まとめの帯を足す。半分は、場所を書かない
+  if (k < 0.52) return { op: "add", el: { id, type: "summary", show: pick(r, STATUSES), ...(r() < 0.5 ? { x: int(r, 0, 1400, 20), y: int(r, -400, 0, 20) } : {}) } };
   if (k < 0.55) {
     const p = pos();
     return { op: "add", el: { id, type: "stroke", points: [[p.x, p.y], [p.x + 40, p.y + 30]] } };
@@ -193,6 +218,13 @@ export function agentOp(r: Rng, doc: Doc, n: number): Op {
       if (q < 0.8) return { op: "set", id: t.id, patch: { cols: r() < 0.3 ? null : int(r, 1, 4) } };
       return { op: "set", id: t.id, patch: { question: r() < 0.5 ? null : "来期の採用は何人か" } };
     }
+    if (t.type === "summary") {
+      if (q < 0.4) return { op: "set", id: t.id, patch: { show: pick(r, STATUSES) } };
+      if (q < 0.7) return { op: "set", id: t.id, patch: { x: int(r, 0, 1400, 20), y: int(r, -400, 200, 20) } };
+      return { op: "set", id: t.id, patch: { w: pick(r, [300, 480, 700]), h: pick(r, [50, 400]) } };
+    }
+    // 付箋の状態を変える。まとめの帯の行が増減する
+    if (t.type === "shape" && q < 0.4) return { op: "set", id: t.id, patch: r() < 0.25 ? { status: null, carriedFrom: null } : { status: pick(r, STATUSES), carriedFrom: null } };
     if (isSolid(t)) {
       if (q < 0.5) return { op: "set", id: t.id, patch: pos() };
       if (q < 0.6) return { op: "set", id: t.id, patch: { x: (t.x ?? 0) + int(r, -40, 40, 10) } };
@@ -211,6 +243,25 @@ export function agentOp(r: Rng, doc: Doc, n: number): Op {
 const hit = (a: Box, b: Box): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const colsSections = (doc: Doc): El[] => doc.elements.filter((e) => e.type === "container" && e.cols !== undefined);
 const arranged = (doc: Doc, c: El): El[] => membersOf(doc.elements, c).filter(isSolid);
+
+/**
+ * まとめの帯と、場所をふさぐ要素かセクションが、重なっている組。
+ * 帯が中に置かれているセクション（帯の中心が枠の中）は数えない
+ */
+export function bandOverlaps(doc: Doc): Set<string> {
+  const out = new Set<string>();
+  for (const band of doc.elements) {
+    const bb = band.type === "summary" ? boxOf(band) : null;
+    if (!bb) continue;
+    for (const e of doc.elements) {
+      const eb = e.id !== band.id && (isSolid(e) || e.type === "container" || e.type === "summary") ? boxOf(e) : null;
+      if (!eb || !hit(bb, eb)) continue;
+      if (e.type === "container" && membersOf(doc.elements, e).some((m) => m.id === band.id)) continue;
+      out.add(`${band.id}/${e.id}`);
+    }
+  }
+  return out;
+}
 
 /** 重なっているセクションの組 */
 export function overlaps(doc: Doc): Set<string> {
@@ -256,6 +307,9 @@ export function violations(base: Doc, ops: readonly Op[]): string[] {
     const byPosition = [...members].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
     if (byPosition.some((m, i) => m.id !== members[i]?.id)) out.add("並ぶ順が、要素の並びと違う");
   }
+  // まとめの帯の高さは、集めた行の数からの高さ
+  const rows = summarize(doc.elements);
+  if (doc.elements.some((e) => e.type === "summary" && e.h !== summaryHeight(itemsOf(rows, e).length))) out.add("帯の高さが、行の数と合わない");
   // 操作が触れていない外の要素が、操作が触れていない cols のセクションの中身になっていない
   // restore（元に戻す）は、中に書いた要素とセクションに触れる
   const inside = (o: Op): unknown[] => [o.id, ...[o.set, o.add].flatMap((xs) => (Array.isArray(xs) ? xs.map((x) => (isRecord(x) ? x.id : undefined)) : [])), ...(isRecord(o.members) ? Object.keys(o.members) : [])];
@@ -368,14 +422,14 @@ export function formatViolations(base: Doc, cols: number, tidy: boolean): string
   const plan = planFormat(base.elements, cols);
   if (!plan.ok || JSON.stringify(plan.value.moved) !== JSON.stringify(res.value.updated)) out.add("試した結果と、動いた要素が違う");
   // P6 セクションに入っていない、場所をふさぐ要素は動かない
-  const sized = withSummaryHeights(base.elements);
+  const sized = base.elements;
   const sections = sized.filter((e) => e.type === "container");
   const inSome = new Set(sections.flatMap((c) => membersOf(sized, c).map((m) => m.id)));
   for (const el of base.elements) if (isSolid(el) && !inSome.has(el.id) && JSON.stringify(el) !== JSON.stringify(after.get(el.id))) out.add("セクションに入っていない要素が動く");
   if (!tidy) return [...out];
   // P2 要素の集まり、並び、セクションごとの中身が同じ
   if (base.elements.map((e) => e.id).join(",") !== doc.elements.map((e) => e.id).join(",")) out.add("要素か並びが変わる");
-  const sizedAfter = withSummaryHeights(doc.elements);
+  const sizedAfter = doc.elements;
   const content = (els: El[], id: string): string => {
     const c = els.find((e) => e.id === id);
     return c ? membersOf(els, c).map((m) => m.id).sort().join(",") : "";

@@ -15,7 +15,7 @@ export interface Gesture {
 }
 
 const positionPatch = (el: El): Op => (el.type === "stroke" ? { points: el.points } : el.type === "arrow" ? { from: el.from, to: el.to } : { x: el.x, y: el.y });
-const widthOnly = (el: El): boolean => el.type === "text" || el.type === "table" || el.type === "gantt";
+const widthOnly = (el: El): boolean => el.type === "text" || el.type === "table" || el.type === "gantt" || el.type === "summary";
 const find = (doc: Doc, id: string): El | undefined => doc.elements.find((e) => e.id === id);
 
 /** ドラッグ。選んだ要素（選んだ順）と、選んだセクションの中身を、dx・dy だけ動かした絶対座標の set を送る */

@@ -7,7 +7,7 @@ import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, 
 import type { EndMark, ShapeKind } from "../shared/model.ts";
 import { restoreOp, withGeometry } from "../shared/restore.ts";
 import { focusLabel, keptOnFocus } from "../shared/focus.ts";
-import { itemsOf, summarize, withSummaryHeights, type Summary } from "../shared/summary.ts";
+import { itemsOf, summarize, type Summary } from "../shared/summary.ts";
 
 const SVG_NS ="http://www.w3.org/2000/svg";
 const params = new URLSearchParams(location.search);
@@ -526,18 +526,14 @@ function renderEl(el: El): void {
 let summary: Summary = summarize([]);
 
 /**
- * まとめの帯を、今の付箋に合わせる。帯の高さ（h）を手元の要素に入れ、帯を描き直す。
- * WHY 手元で入れる: 帯の高さは、ほかの付箋の状態で決まる。選択の枠や取っ手の位置に、要素の h を使う
+ * まとめの帯の行を、今の付箋に合わせて描き直す。
+ * 帯の高さ（h）は、サーバーが操作のたびに書くので、ここでは変えない
  */
 function syncSummaries(): void {
   const all = [...els.values()];
   if (!all.some((e) => e.type === "summary")) return;
   summary = summarize(all);
-  for (const el of withSummaryHeights(all)) {
-    if (el.type !== "summary") continue;
-    els.set(el.id, el);
-    renderEl(el);
-  }
+  for (const el of all) if (el.type === "summary") renderEl(el);
 }
 
 /** 帯の中身。題名と、集めた付箋の行。行は、押すと元の付箋へ移る（行の中身は、元の付箋で直す） */
@@ -1022,6 +1018,11 @@ function parseEls(raw: unknown): El[] {
 function upsert(el: El): void {
   const local = els.get(el.id);
   const held = (gesture?.kind === "move" && gesture.orig.has(el.id)) || (gesture?.kind === "resize" && gesture.orig.id === el.id);
+  // ドラッグや大きさの変更の最中に、サーバーが動かした（押し下げた、まとめの帯が伸びた）要素は、「元に戻す」が書く場所（origin）を、届いた値に替える。
+  // WHY: 操作を始めた時点の値を書くと、サーバーが動かしたぶんが打ち消され、後で行が減って上がるときに、始めより上へ行く。
+  // 手元の位置（ドラッグの量）は、origin からの差なので、ドラッグしている要素も、サーバーが動かしたぶん一緒に動く
+  if (gesture?.kind === "move" && gesture.orig.has(el.id)) gesture.orig.set(el.id, el);
+  if (gesture?.kind === "resize" && gesture.orig.id === el.id) gesture.orig = el;
   // ガントの帯を動かしている最中は、ほかからの更新が届いても、手元の行を保つ
   const dragging = gesture?.kind === "gantt" && gesture.id === el.id && local;
   els.set(el.id, dragging ? { ...el, bars: local.bars } : held && local ? withGeometry(el, local) : el);

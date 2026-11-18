@@ -1,6 +1,6 @@
 // まとめの帯（summary）。付箋の状態から、決定事項・宿題・未決などの一覧を集める。
-// 集める決まりは、ここの 1 か所にある。画面の描画、帯の高さ、xwb summary、xwb ls、検査が、ここを通る。
-import { boxOf, membersOf, statusBadge, summaryHeight, type El, type NoteStatus } from "./model.ts";
+// 集める決まりは、ここの 1 か所にある。画面の描画、帯の高さ（model.ts の settleSummaries）、xwb summary、xwb ls が、ここを通る。
+import { boxOf, membersOf, statusBadge, type El, type NoteStatus } from "./model.ts";
 import { parseRich } from "./rich.ts";
 
 /** 帯の 1 行。1 枚の付箋 */
@@ -90,14 +90,4 @@ export function summarize(els: readonly El[]): Summary {
 /** 帯の要素が集める行。帯でない要素には、空の並びを返す */
 export function itemsOf(summary: Summary, el: El): SummaryItem[] {
   return el.type === "summary" && el.show !== undefined ? summary[el.show] : [];
-}
-
-/**
- * まとめの帯の h に、今の行の数からの高さを入れた要素の並びを返す。ほかの要素は、そのまま。
- * WHY: 帯の高さは、ほかの付箋の状態で決まり、要素 1 つからは分からない。大きさを使う所（検査、xwb ls、画面）は、先にこれを通す
- */
-export function withSummaryHeights(els: readonly El[]): El[] {
-  if (!els.some((e) => e.type === "summary")) return [...els];
-  const summary = summarize(els);
-  return els.map((el) => (el.type === "summary" ? { ...el, h: summaryHeight(itemsOf(summary, el).length) } : el));
 }

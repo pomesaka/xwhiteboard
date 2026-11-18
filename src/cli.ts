@@ -8,7 +8,7 @@ import { BOARD_EXT, DEFAULT_PORT, startServer } from "./server/server.ts";
 import { loadToken } from "./server/token.ts";
 import { FORMAT_MAX_COLS } from "./shared/format.ts";
 import { boxOf, isRecord, parseEl, serialize } from "./shared/model.ts";
-import { itemsOf, summarize, withSummaryHeights } from "./shared/summary.ts";
+import { itemsOf, summarize } from "./shared/summary.ts";
 
 const USAGE = `xwb: ローカルで動くホワイトボード
 
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
         return el.ok ? [el.value] : [];
       });
       const summary = summarize(parsed);
-      const sized = new Map(withSummaryHeights(parsed).map((el) => [el.id, el]));
+      const sized = new Map(parsed.map((el) => [el.id, el]));
       const elements = raws.map((raw: unknown) => {
         const el = isRecord(raw) && typeof raw.id === "string" ? sized.get(raw.id) : undefined;
         const box = el ? boxOf(el) : null;

@@ -3,7 +3,6 @@
 // 操作（applyOps の format）も、CLI の --dry-run も、同じ結果を使う。
 import { OUTER_GAP, boxOf, isSolid, ridersOf, shifted, type Box, type El, type Point, type Res } from "./model.ts";
 import { facing } from "./route.ts";
-import { withSummaryHeights } from "./summary.ts";
 
 /** 下の段の列の数。書かなかったときの数と、上限 */
 export const FORMAT_COLS = 2;
@@ -71,8 +70,8 @@ export function formatOp(els: readonly El[], op: Record<string, unknown>): Res<F
  * WHY 最初のセクションを左の端の列に置く: 左の端の列が空くと、全体の左上（起点）が右へずれて、2 回めの列の場所が変わる。
  */
 export function planFormat(els: readonly El[], cols: number): Res<FormatPlan> {
-  // まとめの帯の高さは、要素に書かれていないことがある。行の数からの高さで測る
-  const sized = withSummaryHeights(els);
+  // まとめの帯の高さは、操作のたびに applyOps が要素の h に書く（settleSummaries）。format は、その前の並べ直しの後に呼ばれるので、h のままで測れる
+  const sized = els;
   const boxes = new Map(sized.flatMap((el): [string, Box][] => {
     const b = boxOf(el);
     return b ? [[el.id, b]] : [];

@@ -2,8 +2,8 @@
 // 回数は、ふだんは数秒で終わる数。増やすときは XWB_FUZZ_SEEDS=3000 bun test test/fuzz.test.ts
 // 落ちたら、出力の seed と操作を、手で書いたテスト（model.test.ts、restore.test.ts）に写してから直す。
 import { expect, test } from "bun:test";
-import { applyOps, emptyDoc, isRecord, isSolid, membersOf } from "../src/shared/model.ts";
-import { agentOp, board, gesture, overlaps, rng, violations } from "./random.ts";
+import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf } from "../src/shared/model.ts";
+import { agentOp, bandOverlaps, board, gesture, overlaps, rng, violations } from "./random.ts";
 import { send, undone, type Op } from "./screen.ts";
 
 const SEEDS = Number(process.env.XWB_FUZZ_SEEDS ?? 150);
@@ -105,9 +105,57 @@ test("画面の操作と「元に戻す」の間に、エージェントの操�
         const still = new Set(membersOf(back.elements, now).map((m) => m.id));
         if (membersOf(later.elements, c).some((m) => isSolid(m) && !moved.has(m.id) && !still.has(m.id))) kinds.push("中身だった要素が、セクションから外れる");
       }
+      // 戻す操作が場所を書いたまとめの帯は、戻した場所で、下の要素に重ならない（その間にエージェントが行を増やしていても、押し下げる）
+      const bandsSited = new Set(sent.undo.flatMap((u) => (Array.isArray(u.set) ? u.set.flatMap((item) => (isRecord(item) && isRecord(item.patch) && ("y" in item.patch || "x" in item.patch) && later.elements.find((e) => e.id === item.id)?.type === "summary" ? [item.id] : [])) : [])));
+      // 見るのは、帯の上の端と同じか下から始まる要素（入っているセクションも）との重なり。
+      // WHY 上から始まる要素を外す: 帯が離れている間に、エージェントが、帯の空けた場所へ、上から要素を動かしている（compact、帯を足す）ことがある。
+      // セクションの場所を戻すときと同じに、戻した場所がふさがっている形は扱わない
+      const was = new Set([...bandOverlaps(later), ...bandOverlaps(doc)]);
+      const topOf = (id: string): number => {
+        const el = back.elements.find((e) => e.id === id);
+        const home = back.elements.filter((c) => c.type === "container" && el !== undefined && membersOf(back.elements, c).some((m) => m.id === id));
+        return Math.min(boxOf(el ?? { id, type: "shape" })?.y ?? Infinity, ...home.map((c) => c.y ?? Infinity));
+      };
+      const fresh = [...bandOverlaps(back)].filter((pair) => {
+        const [band, other] = pair.split("/");
+        const bandY = back.elements.find((e) => e.id === band)?.y ?? 0;
+        return !was.has(pair) && bandsSited.has(band ?? "") && topOf(other ?? "") >= bandY;
+      });
+      if (fresh.length > 0) kinds.push("戻した帯が、下の要素に重なる");
       if (kinds.length > 0) broken.push({ seed, i, kind: g.kind, kinds, ops: g.ops, agent, undo: sent.undo });
     }
   }
   expect(broken).toEqual([]);
   expect(tried).toBeGreaterThan(SEEDS * 5);
+}, TIMEOUT);
+
+test("付箋の状態を変えて、まとめの帯が伸び縮みしても、帯が、重なっていなかった要素に重ならない", () => {
+  const broken: unknown[] = [];
+  let tried = 0;
+  for (let seed = 1; seed <= SEEDS; seed++) {
+    const r = rng(seed);
+    let doc = board(r);
+    for (let i = 0; i < 12; i++) {
+      const bands = doc.elements.filter((e) => e.type === "summary");
+      const notes = doc.elements.filter((e) => e.type === "shape");
+      const band = bands[Math.floor(r() * bands.length)];
+      const note = notes[Math.floor(r() * notes.length)];
+      if (!band || !note) break;
+      // 帯が集める状態を付けるか、外す。付箋の場所と大きさは変えない
+      const op: Op = { op: "set", id: note.id, patch: r() < 0.6 ? { status: band.show, carriedFrom: null } : { status: null, carriedFrom: null } };
+      const res = applyOps(doc, [op]);
+      if (!res.ok) continue;
+      tried++;
+      const before = bandOverlaps(doc);
+      const fresh = [...bandOverlaps(res.value.doc)].filter((pair) => !before.has(pair));
+      const kinds = violations(doc, [op]);
+      if (fresh.length > 0 || kinds.length > 0) {
+        broken.push({ seed, i, op, fresh, kinds });
+        break;
+      }
+      doc = res.value.doc;
+    }
+  }
+  expect(broken).toEqual([]);
+  expect(tried).toBeGreaterThan(SEEDS * 3);
 }, TIMEOUT);
