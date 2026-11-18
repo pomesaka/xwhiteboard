@@ -425,15 +425,15 @@ function renderEl(el: El): void {
         n.append(shp);
       }
       const body = div("body");
-      // 状態と発言者の札、見出し、本文の順に積む
+      // 札の段（左から、状態の札、tag。右端に発言者）、見出し、本文の順に積む
       const badge = statusBadge(el);
-      if (badge || el.who) {
+      if (badge || el.tag || el.who) {
         const meta = div("meta");
         if (badge) meta.append(div(`st st-${badge.status}`, badge.label));
+        if (el.tag) meta.append(div("tag", el.tag));
         if (el.who) meta.append(div("who", el.who));
         body.append(meta);
       }
-      if (el.tag) body.append(div("tag", el.tag));
       if (el.title) body.append(div("ntitle", el.title));
       const txt = div("txt");
       fillRich(txt, el.text ?? "");

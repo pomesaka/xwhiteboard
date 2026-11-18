@@ -107,7 +107,7 @@ export interface El {
   who?: string;
   /** 付箋と図形の状態の札。carriedFrom だけを書いたときは、持ち越しとして出す */
   status?: NoteStatus;
-  /** 持ち越しの元の会議の日付。札に「11/11 から」と出す。本文に日付を書かないので、同じ日付の繰り返しの検査にかからない */
+  /** 持ち越しの元の会議の日付。札に「持ち越し 11/11」と出す。本文に日付を書かないので、同じ日付の繰り返しの検査にかからない */
   carriedFrom?: string;
   /** セクションの中身を、この列の数で詰めて並べる。書くと、中身の位置と幅、セクションの高さを xwb が決める */
   cols?: number;
@@ -444,12 +444,15 @@ export function parseEl(raw: unknown): Res<El> {
   return ok(el);
 }
 
-/** 付箋の状態の札に出す文字。状態が無ければ null。持ち越しには、元の日付を付ける（「持ち越し · 11/11 から」） */
+/**
+ * 付箋の状態の札に出す文字。状態が無ければ null。持ち越しには、元の日付を付ける（「持ち越し 11/11」。月までの日付は「持ち越し 11月」）。
+ * WHY 短く書く: 札の段は 1 段で、tag と発言者も同じ段に並ぶ。「持ち越し · 11/11 から」と書くと、幅 220 の付箋で発言者が切れる
+ */
 export function statusBadge(el: El): { status: NoteStatus; label: string } | null {
   const status = el.status ?? (el.carriedFrom === undefined ? undefined : "carried");
   if (status === undefined) return null;
   const [, month, day] = (el.carriedFrom ?? "").split("-").map(Number);
-  const from = month === undefined ? "" : day === undefined ? ` · ${month}月から` : ` · ${month}/${day} から`;
+  const from = month === undefined ? "" : day === undefined ? ` ${month}月` : ` ${month}/${day}`;
   return { status, label: STATUS_LABEL[status] + from };
 }
 

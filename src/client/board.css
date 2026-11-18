@@ -97,31 +97,42 @@
   min-height: 1.4em;
   min-width: 1em;
 }
-.shape .tag {
-  font-size: var(--board-text-tag);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--el-ink);
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 付箋の欄。上から、状態と発言者の札、見出し、本文 */
+/* 付箋の欄。上から、札の段（状態の札、tag、発言者）、見出し、本文。
+   札の段は 1 段で、折り返さない。高さ（行 1.5 × 文字 ＋ 下の余白 5）は、見積もり（check.ts の META_H）と同じ値。
+   WHY 1 段: 状態と発言者、その下に tag、と 2 段に分けると、状態の無い付箋で上の段の左が空く */
 .shape .meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   margin-bottom: 5px;
   font-size: var(--board-text-tag);
   font-weight: 700;
   line-height: 1.5;
 }
+/* 入りきらないときは、tag を「…」で切る。tag が無くなるまで縮めても足りなければ、発言者を切る。状態の札は切らない。
+   WHY tag の縮む割合を極端に大きくする: flex は、縮むぶんを割合で分ける。発言者にわずかでも回ると、入りきっているのに「…」が出る。
+   割合を大きく離して、tag が縮みきるまで、発言者に回るぶんを 1px の 1/64（配置の最小の単位）より小さくする */
 .shape .meta > * {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shape .st,
+.shape .who {
   padding: 0 6px;
   border-radius: 999px;
-  white-space: nowrap;
+}
+.shape .st {
+  flex: none;
+}
+/* WHY 下限の幅: 1 文字と「…」が入る幅を残す。これより狭いと、文字の切れ端だけが出る */
+.shape .tag {
+  flex: 0 1000000 auto;
+  min-width: 2.2em;
+  letter-spacing: 0.04em;
+  color: var(--el-ink);
 }
 /* 状態の札は、付箋の色に関わらず同じ色で出す（色で状態を見分けられるように） */
 .shape .st {
@@ -133,7 +144,8 @@
 .st-carried { --st: var(--status-carried); }
 .st-priority { --st: var(--status-priority); }
 .shape .who {
-  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 3.4em;
   background: var(--board-surface);
   color: var(--board-text-muted);
   box-shadow: inset 0 0 0 1px var(--board-line);
@@ -389,9 +401,26 @@
 .shape.al-right .body {
   width: 100%;
 }
-.shape.al-left .tag { text-align: left; }
-.shape.al-center .tag { text-align: center; }
-.shape.al-right .tag { text-align: right; }
+/* 札の段は、文字の寄せに合わせる。付箋と左寄せは左から並べて発言者を右端に、右寄せは右へ詰めて発言者を右端に、
+   中央寄せ（付箋でない図形の既定）は、札を並べたまま中央に置く */
+.s-note .meta,
+.shape.al-left .meta {
+  justify-content: flex-start;
+}
+.shape.al-right .meta {
+  justify-content: flex-end;
+}
+.shape.al-center .meta {
+  justify-content: center;
+}
+.s-note .who,
+.shape.al-left .who,
+.shape.al-right .who {
+  margin-left: auto;
+}
+.shape.al-center .who {
+  margin-left: 0;
+}
 
 .table table {
   width: 100%;

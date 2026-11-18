@@ -638,9 +638,9 @@ describe("付箋の欄（title・who・status・carriedFrom）", () => {
 
   test.each([
     ["状態だけ", note({ status: "decided" }), { status: "decided", label: "決定" }],
-    ["持ち越しと日付", note({ status: "carried", carriedFrom: "2026-11-11" }), { status: "carried", label: "持ち越し · 11/11 から" }],
-    ["日付だけを書くと、持ち越し", note({ carriedFrom: "2026-11-04" }), { status: "carried", label: "持ち越し · 11/4 から" }],
-    ["月までの日付", note({ carriedFrom: "2026-10" }), { status: "carried", label: "持ち越し · 10月から" }],
+    ["持ち越しと日付", note({ status: "carried", carriedFrom: "2026-11-11" }), { status: "carried", label: "持ち越し 11/11" }],
+    ["日付だけを書くと、持ち越し", note({ carriedFrom: "2026-11-04" }), { status: "carried", label: "持ち越し 11/4" }],
+    ["月までの日付", note({ carriedFrom: "2026-10" }), { status: "carried", label: "持ち越し 10月" }],
     ["どちらも無ければ、札は無い", note({ who: "竹内" }), null],
   ])("札の文字: %s", (_name, raw, expected) => {
     const r = parseEl(raw);

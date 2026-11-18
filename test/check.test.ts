@@ -249,7 +249,7 @@ describe("付箋の欄", () => {
     expect(checkPx(note({ title, text: "補足" }))).toEqual(expected);
   });
 
-  // 同じ本文（1 行）で、札と見出しを足すと、入る高さの下限が上がる。札の段で 21、見出し 1 行で 23
+  // 同じ本文（1 行）で、札と見出しを足すと、入る高さの下限が上がる。札の段（状態・tag・who を並べる 1 段）で 21、見出し 1 行で 23
   test.each([
     ["本文だけ。高さ 36 で入る", { h: 36, text: "補足の文" }, []],
     ["本文だけ。高さ 35 では小さくなる", { h: 35, text: "補足の文" }, ["small-text:a:10"]],
@@ -257,6 +257,14 @@ describe("付箋の欄", () => {
     ["status 付き。高さ 56 では小さくなる", { h: 56, text: "補足の文", status: "open" }, ["small-text:a:10"]],
     ["who 付き。高さ 57 で入る", { h: 57, text: "補足の文", who: "竹内" }, []],
     ["who 付き。高さ 56 では小さくなる", { h: 56, text: "補足の文", who: "竹内" }, ["small-text:a:10"]],
+    ["tag 付き。高さ 57 で入る", { h: 57, text: "補足の文", tag: "事実" }, []],
+    ["tag 付き。高さ 56 では小さくなる", { h: 56, text: "補足の文", tag: "事実" }, ["small-text:a:10"]],
+    ["tag と who は同じ段に並ぶ。高さ 57 で入る", { h: 57, text: "補足の文", tag: "事実", who: "竹内" }, []],
+    ["tag と who。高さ 56 では小さくなる", { h: 56, text: "補足の文", tag: "事実", who: "竹内" }, ["small-text:a:10"]],
+    ["tag と status と who も 1 段。高さ 57 で入る", { h: 57, text: "補足の文", tag: "事実", status: "open", who: "竹内" }, []],
+    ["tag と status と who。高さ 56 では小さくなる", { h: 56, text: "補足の文", tag: "事実", status: "open", who: "竹内" }, ["small-text:a:10"]],
+    ["title と tag と status と who。高さ 80 で入る", { h: 80, text: "補足の文", title: "見積もり", tag: "事実", status: "open", who: "竹内" }, []],
+    ["title と tag と status と who。高さ 79 では小さくなる", { h: 79, text: "補足の文", title: "見積もり", tag: "事実", status: "open", who: "竹内" }, ["small-text:a:10"]],
     ["title 付き。高さ 59 で入る", { h: 59, text: "補足の文", title: "見積もり" }, []],
     ["title 付き。高さ 58 では小さくなる", { h: 58, text: "補足の文", title: "見積もり" }, ["small-text:a:10"]],
     ["title と status 付き。高さ 80 で入る", { h: 80, text: "補足の文", title: "見積もり", status: "open" }, []],
@@ -265,6 +273,34 @@ describe("付箋の欄", () => {
     ["title だけ。高さ 42 では収まらない", { h: 42, title: "見積もり" }, ["text-overflow:a:undefined"]],
   ])("札と見出しで減る高さ: %s", (_name, extra, expected) => {
     expect(checkPx(note(extra))).toEqual(expected);
+  });
+
+  // 札の段は 1 段で、折り返さない。幅 220 の付箋の内側は 196。全角 1 文字が 10.5、状態の札と who の札の余白が 12 ずつ、札どうしの間が 4、tag は字の間が 0.42 ずつ
+  const z = (n: number): string => "あ".repeat(n);
+  const over = (ops: unknown[]): string[] => {
+    const r = applyOps(emptyDoc("t"), ops);
+    if (!r.ok) throw new Error(r.error);
+    return checkBoard(r.value.doc).flatMap((i) => (i.kind === "meta-overflow" ? [`${i.ids.join(",")}:${i.w}`] : []));
+  };
+  test.each([
+    ["札が無い", { text: "本文" }, []],
+    ["who が全角 17 文字（190.5）は入る", { who: z(17) }, []],
+    ["who が全角 18 文字（201）は入りきらない", { who: z(18) }, ["a:5"]],
+    ["tag が全角 17 文字（185.6）は入る", { tag: z(17) }, []],
+    ["tag が全角 18 文字（196.6）は入りきらない", { tag: z(18) }, ["a:1"]],
+    ["tag 8 文字と who 8 文字（187.4）は入る", { tag: z(8), who: z(8) }, []],
+    ["tag 8 文字と who 9 文字（197.9）は入りきらない", { tag: z(8), who: z(9) }, ["a:2"]],
+    ["状態と tag 5 文字と who 8 文字（191.6）は入る", { status: "decided", tag: z(5), who: z(8) }, []],
+    ["状態と tag 6 文字と who 8 文字（202.5）は入りきらない", { status: "decided", tag: z(6), who: z(8) }, ["a:7"]],
+    ["日付つきの持ち越しと、2 文字の tag と、役割つきの who は入る", { carriedFrom: "2026-11-11", tag: "宿題", who: "発言 高坂" }, []],
+    ["月までの持ち越しと、2 文字の tag と、役割つきの who は入る", { carriedFrom: "2026-11", tag: "宿題", who: "発言 高坂" }, []],
+    ["幅を増やせば入る", { tag: z(8), who: z(9), w: 222 }, []],
+    ["幅 141 の付箋（内側 117）に、状態と tag と who は入りきらない", { status: "decided", tag: "事実", who: "担当 設楽", w: 141 }, ["a:7"]],
+    ["幅 141 の付箋に、tag と who だけなら入る", { tag: "事実", who: "担当 設楽", w: 141 }, []],
+    ["付箋でない箱も、同じ内側の幅で見る", { shape: "rect", tag: z(8), who: z(9) }, ["a:2"]],
+    ["楕円は、内側が狭い（幅の 0.72）", { shape: "ellipse", tag: z(8), who: z(6), h: 160 }, ["a:8"]],
+  ])("札の段が 1 段に入るか: %s", (_name, extra, expected) => {
+    expect(over(note(extra))).toEqual(expected);
   });
 
   test("持ち越しの日付を carriedFrom に書けば、同じ日付の繰り返しにならない", () => {

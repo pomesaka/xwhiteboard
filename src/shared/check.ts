@@ -42,6 +42,8 @@ export type IssueKind =
   | "handwritten-field"
   /** 付箋の見出し（title）が 1 行に入らない */
   | "long-title"
+  /** 付箋の札の段（状態の札、tag、発言者）が 1 段に入りきらず、tag か発言者が「…」で切れる */
+  | "meta-overflow"
   /** セクションに論点（question）があって、結論（answer）が無い */
   | "open-question"
   /** 列で並べるセクション（cols）の中に、別のセクションがある */
@@ -67,9 +69,16 @@ const SMALL_FONT = 11;
 const MIN_FONT = 9;
 const SHAPE_FONT = 15;
 const LINE = 1.4;
-const TAG_H = 18;
-/** 付箋の、状態と発言者の札の段の高さ。画面の CSS（.shape .meta）と同じ値 */
+/** 付箋の札の段（状態の札、tag、発言者を並べる 1 段）の高さ。どれか 1 つでもあれば、この高さを取る。画面の CSS（.shape .meta）と同じ値 */
 const META_H = 21;
+/**
+ * 札の段の横の大きさ。文字の大きさ、状態の札と発言者の札の左右の余白の合計、札どうしの間、tag の字の間。
+ * 画面の CSS（--board-text-tag、.shape .st と .who の padding、.shape .meta の gap、.shape .tag の letter-spacing）と同じ値
+ */
+const META_FONT = 10.5;
+const META_PILL_PAD = 12;
+const META_GAP = 4;
+const META_TAG_SPACING = 0.04;
 /** ガントの行の名前の文字の大きさと、欄の左右の余白の合計。画面の CSS（.gantt と .gname）と同じ値 */
 const GANTT_FONT = 12;
 const GANTT_NAME_PAD = 12;
@@ -209,13 +218,27 @@ function titleLines(el: El): number {
   return Math.max(1, Math.ceil(boldWidth(el.title, NOTE_TITLE_FONT) / Math.max(NOTE_TITLE_FONT, inner.w)));
 }
 
+/**
+ * 付箋の札の段（状態の札、tag、発言者）を 1 段に並べたときの幅。札が無ければ 0。
+ * 文字の幅は見積もり（boldWidth）で、半角は広めに数える。多めに出るぶんには、札を短くすれば済む
+ */
+function metaWidth(el: El): number {
+  const badge = statusBadge(el);
+  const parts = [
+    ...(badge ? [boldWidth(badge.label, META_FONT) + META_PILL_PAD] : []),
+    ...(el.tag ? [boldWidth(el.tag, META_FONT) + [...el.tag].length * META_TAG_SPACING * META_FONT] : []),
+    ...(el.who ? [boldWidth(el.who, META_FONT) + META_PILL_PAD] : []),
+  ];
+  return parts.reduce((sum, w) => sum + w, 0) + Math.max(0, parts.length - 1) * META_GAP;
+}
+
 /** 図形の文字が収まる、いちばん大きい文字の大きさ。いちばん小さくしても収まらなければ null */
 function fittedFont(el: El): number | null {
   const inner = innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0);
   // 本文が空なら、行は無い（見出しだけの付箋）
   const lines = el.text ? plainText(el.text).split("\n") : [];
   const heading = titleLines(el);
-  const room = inner.h - (el.tag ? TAG_H : 0) - (statusBadge(el) || el.who ? META_H : 0) - (heading > 0 ? heading * NOTE_TITLE_FONT * LINE + 2 : 0);
+  const room = inner.h - (statusBadge(el) || el.tag || el.who ? META_H : 0) - (heading > 0 ? heading * NOTE_TITLE_FONT * LINE + 2 : 0);
   for (let px = el.size ? FONT[el.size] : el.title ? NOTE_SUB_FONT : SHAPE_FONT; px >= MIN_FONT; px--) {
     const count = lines.reduce((n, l) => n + Math.max(1, Math.ceil(textWidth(l, px) / Math.max(px, inner.w))), 0);
     if (count * px * LINE <= room) return px;
@@ -435,6 +458,8 @@ export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
     if (!el.title && /^\*\*[^*\n]+\*\*\n/.test(el.text ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の 1 行めの太字は、見出しとして title に書く（本文は text に残す）` });
     if (el.carriedFrom === undefined && HANDWRITTEN_CARRIED.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
     if (el.status === undefined && HANDWRITTEN_STATUS.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（decided・open・carried・priority）。発言者は who に書く` });
+    const metaOver = round(metaWidth(el) - innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0).w);
+    if (metaOver > 0) issues.push({ kind: "meta-overflow", ids: [el.id], message: `${el.id} の札の段（状態の札、tag、who）が 1 段に入りきらず、tag か who が「…」で切れる（${metaOver} はみ出す）。tag を短くするか省く、who を短くする、w を増やす`, w: metaOver });
     if (titleLines(el) > 1) issues.push({ kind: "long-title", ids: [el.id], message: `${el.id} の見出し（title）が 1 行に入らない。短くして、残りは text に書く`, px: titleLines(el) });
     if (!el.text && !el.title) continue;
     const px = fittedFont(el);
