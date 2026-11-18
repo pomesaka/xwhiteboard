@@ -41,6 +41,25 @@ function clearY(boxes: readonly Box[], y: number, obstacles: readonly Box[]): nu
   }
 }
 
+/**
+ * 一緒に動く四角の組（parts。y は組の上の端からの高さ）を、x を変えずに、y から下へ見て、障害物との間が OUTER_GAP 以上空く、いちばん上の高さを返す。
+ * clearY と同じ考え方で、組のどれかに近い障害物があれば、その障害物の下の端から OUTER_GAP 空けた所へ、その部品が来る高さまで飛ぶ
+ */
+function clearParts(parts: readonly Box[], y: number, obstacles: readonly Box[]): number {
+  for (;;) {
+    let next: number | null = null;
+    for (const p of parts) {
+      const blocker = obstacles.find((o) => near({ ...p, y: y + p.y }, o));
+      if (blocker) {
+        next = blocker.y + blocker.h + OUTER_GAP - p.y;
+        break;
+      }
+    }
+    if (next === null) return y;
+    y = next;
+  }
+}
+
 interface Target {
   el: El;
   box: Box;
@@ -120,10 +139,12 @@ function prepare(els: readonly El[]): Res<Prepared> {
  *
  * 並べるのは、いちばん外側のセクション。どのセクションにも入っていないまとめの帯は、動かさない障害物にする（下の WHY）。
  * 1. 列: 横の範囲が重なるものどうしを、同じ列にする（重なりのつながりで 1 つ）。接するだけならつながらない。列は、左の端の順に並べる
- * 2. 全部の列の先頭を、並べるセクションとまとめの帯の、今の上の端のいちばん上に置く（帯の下にある列は、5 で帯の下へよける）
+ * 2. 全部の列の上の端（見出しがあれば見出しの上の端、無ければ先頭の上の端）を、同じ高さにそろえる。
+ *    まとめの帯があれば、帯全体のいちばん下の端から OUTER_GAP。無ければ、今の列の上の端のいちばん上
  * 3. いちばん左の列は、今の左の端のまま。次の列は、前の列でいちばん幅の広いものの右の端から OUTER_GAP 空ける。列の中は、列の左の端に揃える
  * 4. 列の中は、今の上の端の順（同じなら左の端の順）に、上から OUTER_GAP ずつ空けて詰める
- * 5. 場所をふさぐ外の要素（障害物）との間が OUTER_GAP より狭くなるなら、その下の端から OUTER_GAP 空けた所まで下げる。後のものも、その下から続ける
+ * 5. 場所をふさぐ外の要素（障害物）との間が OUTER_GAP より狭くなるなら、その下の端から OUTER_GAP 空けた所まで下げる。後のものも、その下から続ける。
+ *    列の先頭の見出しも、先頭と一緒によける
  * 6. 列の先頭の真上で、間が HEADING_GAP 以内の外の文字（見出し）は、列の先頭と同じだけ動かし、障害物にしない
  *
  * WHY 見出しの横の範囲を、列全体でなく、列の先頭の範囲で見る: 先頭と同じだけ動かすので、動かした後も先頭の真上に残る。
@@ -179,18 +200,31 @@ export function planAlign(els: readonly El[]): Res<FormatPlan> {
   const obstacles = [...prep.value.obstacles.flatMap((o) => (taken.has(o.el.id) ? [] : [o.box])), ...bands.map((b) => b.box)];
 
   // 2〜5. 置く
-  // WHY 帯のいちばん上も数える: 帯の下に議題を並べたボードで、帯と議題の間が空いたまま残らないようにする。
-  // 列の先頭は帯の上の端まで上がろうとし、帯の下にある列は、帯をよけて、その下の端から OUTER_GAP の所で止まる
-  const bandTops = [...bands, ...prep.value.obstacles.filter((o) => o.el.type === "summary")].map((b) => b.box.y);
-  const top = Math.min(...targets.map((t) => t.box.y), ...bandTops);
+  // 列の上の端は、見出しがあれば見出しの上の端、無ければ先頭の上の端。lift は、列の上の端から先頭の上の端までの高さ
+  const lift = (head: Target): number => {
+    const heading = headings.get(head.el.id);
+    return heading ? head.box.y - heading.box.y : 0;
+  };
+  // 全部の列の上の端を、同じ高さ top にそろえる。
+  // WHY 帯があれば、帯全体のいちばん下の端から OUTER_GAP: 帯の下に横に並んだ列（軸のレーン）が、帯の高さの違いで階段にならないようにする。
+  // 列ごとに真上の帯の下へよけると、帯の無い所の列だけ上がり、見出しの行がそろわない
+  // WHY 帯が無ければ、列の上の端のいちばん上: もう一度かけたときに、同じ高さになる（先頭のいちばん上にすると、見出しのぶんずつ下がっていく）
+  const allBands = [...bands, ...prep.value.obstacles.filter((o) => o.el.type === "summary")];
+  const top = allBands.length > 0
+    ? Math.max(...allBands.map((b) => b.box.y + b.box.h)) + OUTER_GAP
+    : Math.min(...columns.flatMap((col) => (col[0] ? [col[0].box.y - lift(col[0])] : [])));
   const spots = new Map<string, Point>();
   let left = Math.min(...(columns[0] ?? []).map((t) => t.box.x));
   for (const col of columns) {
     let y = top;
-    for (const t of col) {
-      y = clearY([{ ...t.box, x: left }], y, obstacles);
-      spots.set(t.el.id, [left, y]);
-      y += t.box.h + OUTER_GAP;
+    for (const [i, t] of col.entries()) {
+      // y は、列の上の端。列の先頭に見出しがあれば、見出しも一緒によける（見出しは、先頭との今の間を保って動く）
+      const heading = i === 0 ? headings.get(t.el.id) : undefined;
+      const off = heading ? lift(t) : 0;
+      const parts = [{ ...t.box, x: left, y: off }, ...(heading ? [{ ...heading.box, x: heading.box.x + (left - t.box.x), y: 0 }] : [])];
+      y = clearParts(parts, y, obstacles);
+      spots.set(t.el.id, [left, y + off]);
+      y += off + t.box.h + OUTER_GAP;
     }
     left += Math.max(...col.map((t) => t.box.w)) + OUTER_GAP;
   }

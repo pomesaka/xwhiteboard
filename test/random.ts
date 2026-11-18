@@ -542,8 +542,28 @@ export function formatViolations(base: Doc, op: FormatOp, tidy: boolean): string
   if (align ? c1?.[0] !== c2?.[0] : JSON.stringify(c1) !== JSON.stringify(c2) && !dodged) out.add("全体の左上が変わる");
   // 揃えるときは、列の中の間がどこも 60（障害物でよけた所を除く）で、列の中は左の端が揃い、列どうしの間が 60
   if (align) {
-    const tops = [...targetsBefore, ...outermost(sized).filter((e) => e.type === "summary")].flatMap((e) => boxOf(e)?.y ?? []);
-    const top = tops.length > 0 ? Math.min(...tops) : undefined;
+    /** 列の先頭の見出し（真上 40 以内で、中心が先頭の横の範囲の、セクションに入っていない文字。いちばん下のもの） */
+    const headingAbove = (headId: string, els: El[]): Box | undefined => {
+      const hb = boxOf(els.find((e) => e.id === headId) ?? { id: "", type: "text" });
+      if (!hb) return undefined;
+      const cands = els.flatMap((e) => {
+        const b = e.type === "text" && !inSome.has(e.id) ? boxOf(e) : null;
+        if (!b) return [];
+        const cx = b.x + b.w / 2;
+        const gap = hb.y - (b.y + b.h);
+        return hb.x <= cx && cx <= hb.x + hb.w && gap > 0 && gap <= 40 ? [b] : [];
+      });
+      return cands.sort((p, q) => q.y + q.h - (p.y + p.h))[0];
+    };
+    /** 列の上の端。見出しがあれば見出しの上の端 */
+    const columnTop = (headId: string, els: El[]): number | undefined => headingAbove(headId, els)?.y ?? boxOf(els.find((e) => e.id === headId) ?? { id: "", type: "text" })?.y;
+    // 全部の列の上の端は、帯があれば帯全体のいちばん下の端 + 60、無ければ、前の列の上の端のいちばん上
+    const bandBottoms = outermost(sized).filter((e) => e.type === "summary").flatMap((e) => {
+      const b = boxOf(e);
+      return b ? [b.y + b.h] : [];
+    });
+    const beforeTops = columnsOf(targetsBefore).flatMap((col) => (col[0] ? [columnTop(col[0], sized) ?? []].flat() : []));
+    const top = bandBottoms.length > 0 ? Math.max(...bandBottoms) + 60 : beforeTops.length > 0 ? Math.min(...beforeTops) : undefined;
     const boxById = new Map(targetsAfter.flatMap((e): [string, Box][] => {
       const b = boxOf(e);
       return b ? [[e.id, b]] : [];
@@ -553,10 +573,14 @@ export function formatViolations(base: Doc, op: FormatOp, tidy: boolean): string
       if (col.some((b) => b.x !== col[0]?.x)) out.add("列の中の左の端が揃わない");
       for (const [i, b] of col.entries()) {
         const above = col[i - 1];
-        // 列の先頭は、並べるセクションとまとめの帯の、いちばん上の高さ（よけたときを除く）
+        // 列の上の端（先頭なら、見出しの上の端）は top、それより下は上のものの下 60（よけたときを除く）
+        const id = columnsOf(targetsAfter)[k]?.[i] ?? "";
+        const heading = i === 0 ? headingAbove(id, sizedAfter) : undefined;
+        const got = heading ? heading.y : b.y;
         const want = above ? above.y + above.h + 60 : top;
-        // よけたなら、すぐ上に、下の端から 60 の障害物がある
-        if (want !== undefined && b.y !== want && !obstacleBoxes.some((o) => o.y + o.h + 60 === b.y)) out.add("列の中が詰まっていない");
+        // よけたなら、先頭か見出しのすぐ上に、下の端から 60 の障害物がある
+        const dodged = obstacleBoxes.some((o) => o.y + o.h + 60 === b.y || (heading !== undefined && o.y + o.h + 60 === heading.y));
+        if (want !== undefined && got !== want && !dodged) out.add("列の中が詰まっていない");
       }
       const prev = cols[k - 1];
       if (prev && col[0] && prev[0] && col[0].x !== prev[0].x + Math.max(...prev.map((b) => b.w)) + 60) out.add("列どうしの間が 60 でない");

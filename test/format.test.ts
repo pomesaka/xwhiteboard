@@ -391,7 +391,7 @@ describe("揃える: 確かめる形", () => {
     ["段は揃えない。列ごとに、上から詰めた位置になる", [sec("A1", 0, 0, { h: 300 }), sec("A2", 0, 500), sec("B1", 600, 0), sec("B2", 600, 400)], { A2: { x: 0, y: 360 }, B2: { x: 564, y: 160 } }, ["A2", "B1", "B2"]],
     ["見出しの付いた列（経営会議の形）。見出しも列の先頭と一緒に動く", [...shape, head("hA", 0, -40 - TH), head("hB", 600, -40 - TH), head("hC", 1200, -40 - TH)], { hA: { x: 0, y: -40 - TH }, hB: { x: 564, y: -40 - TH }, hC: { x: 1128, y: -40 - TH } }, ["A2", "B1", "B2", "C1", "C2", "hB", "hC"]],
     ["帯の下に大きく空いた議題の列も、帯の下 60 まで上がる", [...bands3, sec("A", 0, 360), sec("B", 564, 360)], { A: { x: 0, y: BAND_H + 60 }, B: { x: 564, y: BAND_H + 60 } }, ["A", "B"]],
-    ["帯の右にはみ出した列（帯の下に無い列）は、帯の上の端に揃う", [...bands3, sec("A", 0, 300), sec("B", 564, 300), sec("C", 1128, 300), sec("D", 1700, 300)], { A: { y: BAND_H + 60 }, C: { x: 1128, y: BAND_H + 60 }, D: { x: 1692, y: 0 } }, ["A", "B", "C", "D"]],
+    ["帯の右にはみ出した列（帯の下に無い列）も、帯の下 60 にそろう（上がりすぎない）", [...bands3, sec("A", 0, 300), sec("B", 564, 300), sec("C", 1128, 300), sec("D", 1700, 300)], { A: { y: BAND_H + 60 }, C: { x: 1128, y: BAND_H + 60 }, D: { x: 1692, y: BAND_H + 60 } }, ["A", "B", "C", "D"]],
     ["セクションが 1 つだけでも、帯の下に空いていれば上がる", [band("s1", 0, 0), sec("A", 0, 500)], { A: { x: 0, y: BAND_H + 60 } }, ["A"]],
     ["帯の無いボードは、セクションのいちばん上に揃う", [sec("A", 0, 300), sec("B", 564, 500)], { A: { y: 300 }, B: { y: 300 } }, ["B"]],
     ["帯 3 つを上に、議題 2 列をその下に。帯は動かず、議題は 2 列のまま詰まる", [...bands3, sec("A", 12, 400), sec("A2", 0, 800), sec("B", 588, 300)], { s1: { x: 0, y: 0 }, s2: { x: 540, y: 0 }, s3: { x: 1080, y: 0 }, A: { x: 0, y: BAND_H + 60 }, A2: { x: 0, y: BAND_H + 220 }, B: { x: 564, y: BAND_H + 60 } }, ["A", "A2", "B"]],
@@ -472,7 +472,7 @@ describe("揃える: 固定したセクションと帯は動かさない", () =>
     ["列の先頭の固定したセクションは、動かず、列を読むときにも数えない", [L(0, 0), sec("A", 0, 400), sec("B", 600, 100)], { L: { x: 0, y: 0 }, A: { x: 0, y: 260 }, B: { x: 564, y: 100 } }, ["A", "B"]],
     ["列と列の間の固定したセクションと横が重なっても、列はつながらない", [sec("A", 0, 0), L(300, 400, { w: 600 }), sec("B", 700, 0)], { L: { x: 300, y: 400 }, A: { x: 0, y: 0 }, B: { x: 564, y: 0 } }, ["B"]],
     ["固定したセクションの中身も動かない", [sec("A", 0, 0), L(600, 300), note("n", 624, 352, { w: 100, h: 40 }), sec("B", 1200, 0)], { L: { x: 600, y: 300 }, n: { x: 624, y: 352 }, B: { x: 564, y: 0 } }, ["B"]],
-    ["固定した帯は動かず、障害物になる", [band("s", 0, 0, { locked: true }), sec("A", 0, 500), sec("B", 600, 0)], { s: { x: 0, y: 0 }, A: { x: 0, y: BAND_H + 60 }, B: { x: 564, y: 0 } }, ["A", "B"]],
+    ["固定した帯は動かず、障害物になる", [band("s", 0, 0, { locked: true }), sec("A", 0, 500), sec("B", 600, 0)], { s: { x: 0, y: 0 }, A: { x: 0, y: BAND_H + 60 }, B: { x: 564, y: BAND_H + 60 } }, ["A", "B"]],
   ];
   test.each(rows)("%s", (_name, els, want, moved) => {
     expectAligned(board(els), want, moved);
@@ -490,17 +490,17 @@ describe("揃える: 見出し", () => {
   // X は動かない。B は (700,300) から (564,0) へ、(-136,-300) 動く。B の横の範囲は 700〜1204
   const base = [sec("X", 0, 0), sec("B", 700, 300)];
   const rows: Row[] = [
-    ["間がちょうど 40 なら見出し。列の先頭と同じだけ動く", [head("h", 750, 260 - TH)], { h: { x: 614, y: -40 - TH } }, ["B", "h"]],
-    ["間が 1 なら見出し", [head("h", 750, 299 - TH)], { h: { x: 614, y: -1 - TH } }, ["B", "h"]],
+    ["間がちょうど 40 なら見出し。列の先頭と同じだけ動く", [head("h", 750, 260 - TH)], { h: { x: 614, y: 0 }, B: { x: 564, y: 40 + TH } }, ["B", "h"]],
+    ["間が 1 なら見出し", [head("h", 750, 299 - TH)], { h: { x: 614, y: 0 }, B: { x: 564, y: 1 + TH } }, ["B", "h"]],
     ["間が 41 なら見出しでない。動かない", [head("h", 750, 259 - TH)], { h: { x: 750, y: 259 - TH } }, ["B"]],
     ["間が 0（下の端と先頭の上の端が同じ高さ）なら、見出しでない", [head("h", 750, 300 - TH)], { h: { x: 750, y: 300 - TH } }, ["B"]],
-    ["横の中心が先頭の右の端ちょうどなら、見出し", [head("h", 1104, 280 - TH)], { h: { x: 968, y: -20 - TH } }, ["B", "h"]],
+    ["横の中心が先頭の右の端ちょうどなら、見出し", [head("h", 1104, 280 - TH)], { h: { x: 968, y: 0 } }, ["B", "h"]],
     ["横の中心が先頭の右の端から 1 外なら、見出しでない", [head("h", 1105, 280 - TH)], { h: { x: 1105 } }, ["B"]],
-    ["横の中心が先頭の左の端ちょうどなら、見出し", [head("h", 600, 280 - TH)], { h: { x: 464, y: -20 - TH } }, ["B", "h"]],
+    ["横の中心が先頭の左の端ちょうどなら、見出し", [head("h", 600, 280 - TH)], { h: { x: 464, y: 0 } }, ["B", "h"]],
     ["横の中心が先頭の左の端から 1 外なら、見出しでない", [head("h", 599, 280 - TH)], { h: { x: 599 } }, ["B"]],
-    ["候補が 2 つなら、先頭にいちばん近いものだけ", [head("far", 750, 265 - TH - TH), head("near", 750, 280 - TH)], { near: { x: 614, y: -20 - TH }, far: { x: 750 } }, ["B", "near"]],
-    ["候補が 2 つなら、要素の並びに関わらず、先頭にいちばん近いものだけ", [head("near", 750, 280 - TH), head("far", 750, 265 - TH - TH)], { near: { x: 614, y: -20 - TH }, far: { x: 750 } }, ["B", "near"]],
-    ["下の端が同じ高さの候補は、要素の並びで先のものだけ", [head("first", 650, 280 - TH), head("second", 850, 280 - TH)], { first: { x: 514, y: -20 - TH }, second: { x: 850 } }, ["B", "first"]],
+    ["候補が 2 つなら、先頭にいちばん近いものだけ", [head("far", 750, 265 - TH - TH), head("near", 750, 280 - TH)], { near: { x: 614, y: 0 }, far: { x: 750 } }, ["B", "near"]],
+    ["候補が 2 つなら、要素の並びに関わらず、先頭にいちばん近いものだけ", [head("near", 750, 280 - TH), head("far", 750, 265 - TH - TH)], { near: { x: 614, y: 0 }, far: { x: 750 } }, ["B", "near"]],
+    ["下の端が同じ高さの候補は、要素の並びで先のものだけ", [head("first", 650, 280 - TH), head("second", 850, 280 - TH)], { first: { x: 514, y: 0 }, second: { x: 850 } }, ["B", "first"]],
     ["付箋は、真上 40 以内にあっても見出しにならず、障害物", [note("n", 750, 280 - 110)], { n: { x: 750, y: 170 }, B: { x: 564, y: 0 } }, ["B"]],
   ];
   test.each(rows)("%s", (_name, els, want, moved) => {
@@ -508,7 +508,7 @@ describe("揃える: 見出し", () => {
   });
 
   test("見出しは障害物にしない（列の先頭が上がる先に、見出しの元の場所があっても、よけない）", () => {
-    expectAligned(board([sec("X", 0, 200), sec("B", 700, 300), head("h", 750, 280 - TH)]), { B: { x: 564, y: 200 }, h: { x: 614, y: 180 - TH } }, ["B", "h"]);
+    expectAligned(board([sec("X", 0, 200), sec("B", 700, 300), head("h", 750, 280 - TH)]), { B: { x: 564, y: 220 + TH }, h: { x: 614, y: 200 } }, ["B", "h"]);
   });
 
   test("列の先頭が障害物で下がったぶんも、見出しは同じだけ動く", () => {
@@ -527,12 +527,55 @@ describe("揃える: 見出し", () => {
   });
 });
 
+describe("揃える: 全部の列の上の端をそろえる", () => {
+  // 軸の見出しの文字（幅 48 ほど）。セクションとの間は 20
+  const axis = (id: string, x: number, sectionY: number): Raw => head(id, x + 10, sectionY - 20 - TH);
+  /** 列の上の端（見出しがあれば見出しの上の端） */
+  const topOf = (doc: Doc, id: string): number => doc.elements.find((e) => e.id === id)?.y ?? NaN;
+
+  test("経営会議の形: 帯 3 つ（高さが違う）が左の列の上にだけあり、軸 5 つに見出し。見出しが、いちばん背の高い帯の下 60 で一列になる", () => {
+    const decided = [1, 2, 3, 4].map((i) => note(`d${i}`, 24, 700 + i * 40, { w: 100, h: 30, status: "decided" }));
+    const els = [
+      band("s1", 0, 0), band("s2", 800, 0, { show: "todo" }), band("s3", 1600, 0, { show: "open" }),
+      // 軸ごとに、先頭の高さがまちまち。帯の無い列（3、4）もある
+      axis("k0", 0, 628), sec("a0", 0, 628, { h: 300 }), ...decided, sec("a0b", 0, 1100),
+      axis("k1", 800, 700), sec("a1", 800, 700), sec("a1b", 800, 1000),
+      axis("k2", 1600, 900), sec("a2", 1600, 900),
+      axis("k3", 2400, 628), sec("a3", 2400, 628),
+      axis("k4", 3200, 400), sec("a4", 3200, 400),
+    ];
+    const done = align(board(els)).doc;
+    const want = summaryHeight(4) + 60;
+    expect(["k0", "k1", "k2", "k3", "k4"].map((id) => topOf(done, id))).toEqual([want, want, want, want, want]);
+    expect(["a0", "a1", "a2", "a3", "a4"].map((id) => topOf(done, id))).toEqual(Array(5).fill(want + TH + 20));
+    expect(align(done).updated).toEqual([]);
+  });
+
+  test("帯が伸びた後にもう一度かけると、全部の列が同じだけ下がる", () => {
+    const els = [band("s1", 0, 0), sec("A", 0, 400, { h: 300 }), note("n", 24, 460, { w: 100, h: 30 }), axis("kB", 564, 400), sec("B", 564, 400), sec("C", 1128, 400)];
+    const first = align(board(els)).doc;
+    const grown = build([{ op: "set", id: "n", patch: { status: "decided" } }], first);
+    const second = align(grown).doc;
+    const dy = summaryHeight(1) - summaryHeight(0);
+    for (const id of ["A", "B", "C", "kB"]) expect(topOf(second, id) - topOf(first, id)).toBe(dy);
+  });
+
+  test.each([
+    ["帯のある", [band("s1", 0, 0)], BAND_H + 60],
+    ["帯の無い", [], 300],
+  ])("%s形で、見出しのある列と無い列が混ざると、列の上の端（見出しか、先頭の上の端）がそろう", (_name, top, want) => {
+    const doc = board([...top, axis("kA", 0, 500), sec("A", 0, 500), sec("B", 564, 300), axis("kC", 1128, 700), sec("C", 1128, 700)]);
+    const done = expectAligned(doc, {}, ["A", "C", "kA", "kC", ...(top.length > 0 ? ["B"] : [])]).doc;
+    expect(["kA", "B", "kC"].map((id) => topOf(done, id))).toEqual([want, want, want]);
+  });
+});
+
 describe("揃える: 帯、入れ子、中身", () => {
-  test("帯の高さが違うときは、列ごとに、その上の帯の下 60 に揃う", () => {
+  test("帯の高さが違っても、全部の列の先頭が、いちばん背の高い帯の下 60 にそろう（MIHARU の形）", () => {
     // 帯の高さは、集めた付箋の数（3、1、0）で決まる
     const inA = [1, 2, 3].map((i) => note(`d${i}`, 24, 600 + i * 50, { h: 30, w: 100, status: "decided" }));
     const doc = board([...[band("s1", 0, 0), band("s2", 540, 0, { show: "todo" }), band("s3", 1080, 0, { show: "open" })], sec("A", 0, 600, { h: 300 }), ...inA, sec("B", 564, 700, { h: 300 }), note("t1", 588, 760, { h: 30, w: 100, status: "todo" }), sec("C", 1128, 800)]);
-    const first = expectAligned(doc, { A: { x: 0, y: summaryHeight(3) + 60 }, B: { x: 564, y: summaryHeight(1) + 60 }, C: { x: 1128, y: summaryHeight(0) + 60 } }, ["A", "B", "C", "d1", "d2", "d3", "t1"]);
+    const first = expectAligned(doc, { A: { x: 0, y: summaryHeight(3) + 60 }, B: { x: 564, y: summaryHeight(3) + 60 }, C: { x: 1128, y: summaryHeight(3) + 60 } }, ["A", "B", "C", "d1", "d2", "d3", "t1"]);
     expect(first.doc.elements.find((e) => e.id === "d1")).toMatchObject({ x: 24, y: summaryHeight(3) + 60 + 50 });
   });
 
