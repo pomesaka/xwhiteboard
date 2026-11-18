@@ -26,8 +26,7 @@ const USAGE = `xwb: ローカルで動くホワイトボード
   xwb focus <board> [セクションの id]            話している議題のセクションを残して、ほかを薄くする（id 無しでやめる）
   xwb check <board>                             見た目の問題（重なり、はみ出し、矢印の突き抜けなど）の一覧
   xwb template <board> [json|-]                 型（matrix・versus・tree）を、中身のデータから描く
-  xwb compact <board> [--fit]                   空いた段を上へ詰める（--fit で、セクションも中身の高さまで低くする）
-  xwb format <board> [--dry-run]                今の列を保って、列の位置と縦の間を揃える（--dry-run で、動かさずに、動く要素だけを返す）
+  xwb format <board> [--dry-run]                中身より背の高いセクションを縮め、今の列を保って、列の位置と縦の間を揃える（--dry-run で、動かさずに、動く要素だけを返す）
   xwb format <board> --rebuild [--cols 2] [--dry-run]
                                                 今の列を使わず、上の段と --cols 列の下の段に組み直す
   xwb order <board> <id> front|back           要素を前面か背面へ動かす
@@ -50,7 +49,7 @@ class CliError extends Error {}
 function parseArgs(argv: string[]): { pos: string[]; flags: Map<string, string> } {
   const pos: string[] = [];
   const flags = new Map<string, string>();
-  const bool = new Set(["--no-open", "--force", "--help", "--comments", "--reopen", "--clear", "--fit", "--dry-run", "--rebuild"]);
+  const bool = new Set(["--no-open", "--force", "--help", "--comments", "--reopen", "--clear", "--dry-run", "--rebuild"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
     if (a === "-o") flags.set("--out", argv[++i] ?? "");
@@ -179,12 +178,9 @@ async function main(): Promise<void> {
       print(isRecord(res) && Array.isArray(res.added) ? { added: res.added.map((e) => (isRecord(e) ? e.id : e)) } : res);
       return;
     }
-    case "compact": {
-      const res = await call("/api/ops", { board: boardArg(pos[0]), ops: [{ op: "compact", fit: flags.has("--fit") }] });
-      // 動いた要素は多いので、id だけを返す
-      print(isRecord(res) && Array.isArray(res.updated) ? { moved: res.updated.map((e) => (isRecord(e) ? e.id : e)) } : res);
-      return;
-    }
+    case "compact":
+      // compact は format に統合した。前に書かれた手順のために、案内だけを残す
+      throw new CliError("compact は format に統合した。xwb format <board> を使う（中身より背の高いセクションを縮めてから揃える）");
     case "format": {
       // 列の数が数でなければ、ここで断る（JSON に載せられない）。範囲は、操作（applyOps の format）が見る
       const given = flags.get("--cols");

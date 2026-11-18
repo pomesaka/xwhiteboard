@@ -1,6 +1,6 @@
 // 乱数で、ボードと操作を作る。テスト（fuzz.test.ts）だけが使う。種が同じなら、同じ並びになる。
 import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf, PAD, sectionTop, summaryHeight, type Box, type Doc, type El, type Point } from "../src/shared/model.ts";
-import { planAlign, planRebuild } from "../src/shared/format.ts";
+import { fitSections, planAlign, planRebuild } from "../src/shared/format.ts";
 import { itemsOf, summarize } from "../src/shared/summary.ts";
 import { add, drag, resize, rm, setOps, type Gesture, type Op } from "./screen.ts";
 
@@ -236,7 +236,7 @@ export function agentOp(r: Rng, doc: Doc, n: number): Op {
   }
   if (k < 0.84) return { op: "rm", id: pick(r, ids) };
   if (k < 0.9) return { op: "order", id: pick(r, ids), to: pick(r, ["front", "back"]) };
-  if (k < 0.95) return { op: "compact", ...(r() < 0.5 ? { fit: true } : {}) };
+  if (k < 0.95) return { op: "format" };
   return noop;
 }
 
@@ -467,7 +467,8 @@ export function formatViolations(base: Doc, op: FormatOp, tidy: boolean): string
   if (res.value.updated.map((e) => e.id).sort().join(",") !== changed.join(",")) out.add("返す一覧が、動いた要素と違う");
   const plan = align ? planAlign(base.elements) : planRebuild(base.elements, op.cols ?? 2);
   if (!plan.ok || JSON.stringify(plan.value.moved) !== JSON.stringify(res.value.updated)) out.add("試した結果と、動いた要素が違う");
-  const sized = base.elements;
+  // 並べる前に、中身より背の高い自由なセクションが縮む。大きさと中身の決まりは、縮めた後と比べる
+  const sized = fitSections(base.elements);
   const sizedAfter = doc.elements;
   const sections = sized.filter((e) => e.type === "container");
   const inSome = new Set(sections.flatMap((c) => membersOf(sized, c).map((m) => m.id)));
@@ -504,7 +505,8 @@ export function formatViolations(base: Doc, op: FormatOp, tidy: boolean): string
   if (base.elements.map((e) => e.id).join(",") !== doc.elements.map((e) => e.id).join(",")) out.add("要素か並びが変わる");
   const content = (els: El[], id: string): string => {
     const c = els.find((e) => e.id === id);
-    return c ? membersOf(els, c).map((m) => m.id).sort().join(",") : "";
+    // 場所をふさぐ中身だけを比べる。線とコメントは障害物にしないので、縮めた枠からはみ出した線を、動いた枠が取り込むことがある
+    return c ? membersOf(els, c).filter(isSolid).map((m) => m.id).sort().join(",") : "";
   };
   for (const c of sections) if (content(sized, c.id) !== content(sizedAfter, c.id)) out.add("セクションの中身が変わる");
   // P3 中身は、セクションと同じだけ動く

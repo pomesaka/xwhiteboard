@@ -1,4 +1,4 @@
-// ボードのデータの形と、操作（add・set・rm・say・order・compact・title・template）の適用。
+// ボードのデータの形と、操作（add・set・rm・say・order・format・title・template）の適用。
 // サーバー、CLI、ブラウザ、変換が同じ規則で要素を検証できるよう、ここだけに置く。
 import { GANTT_STATUS, GANTT_UNITS, ganttLayout, parseDay, type GanttBar, type GanttMark, type GanttSegment, type GanttUnit } from "./gantt.ts";
 import { isBoardRef, plainText } from "./rich.ts";
@@ -1304,7 +1304,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
    */
   const readsLayout = (op: Record<string, unknown>): boolean => {
     // 型は、場所を書かなければ、全体の右に置く
-    if (op.op === "compact" || op.op === "template" || op.op === "format") return true;
+    if (op.op === "template" || op.op === "format") return true;
     // cols を外すと、in で足した要素を並べる機会が無くなる
     if (op.op === "set") return isRecord(op.patch) && op.patch.cols === null;
     if (op.op !== "add" || !isRecord(op.el)) return false;
@@ -1518,43 +1518,11 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         remove(op.id);
         break;
       }
-      case "compact": {
-        // fit: 中身より背の高いセクションを、中身が入る高さまで低くする
-        if (op.fit === true) {
-          for (const c of doc.elements.filter((e) => e.type === "container")) {
-            const cb = boxOf(c);
-            const bottoms = membersOf(doc.elements, c).flatMap((m) => {
-              const b = m.type === "comment" ? null : boxOf(m);
-              return b ? [b.y + b.h] : [];
-            });
-            if (!cb || bottoms.length === 0) continue;
-            const need = Math.max(...bottoms) + PAD - cb.y;
-            if (need >= cb.h) continue;
-            replace({ ...c, h: need });
-            touch(c.id);
-          }
-        }
-        // 上から順に見て、段と段の間が OUTER_GAP より空いていたら、その下を全部上へ詰める。
-        // 段は「それまでに見たものの下の端より下から始まるまとまり」で切る。横に並んだものは同じ段として一緒に動く
-        const units = unitsOf(doc.elements).sort((a, b) => a.box.y - b.box.y);
-        let bottom = -Infinity;
-        let shift = 0;
-        for (const u of units) {
-          const gap = u.box.y - shift - bottom;
-          if (bottom !== -Infinity && gap > OUTER_GAP) shift += gap - OUTER_GAP;
-          bottom = Math.max(bottom, u.box.y - shift + u.box.h);
-          if (shift === 0) continue;
-          for (const id of u.ids) {
-            const el = byId.get(id);
-            if (!el) continue;
-            replace(shifted(el, 0, -shift));
-            touch(id);
-          }
-        }
-        break;
-      }
+      case "compact":
+        // compact は format に統合した。前に書かれた手順のために、案内だけを残す
+        return fail(`${at}: compact は format に統合した。xwb format を使う（apply では {"op":"format"}。中身より背の高いセクションを縮めてから揃える）`);
       case "format": {
-        // セクションとまとめの帯を、揃える（既定）か組み直す（rebuild）。置き場所は shared/format.ts が決める。ここは、その結果を書くだけ。
+        // 中身より背の高い自由なセクションを縮めてから、セクションとまとめの帯を、揃える（既定）か組み直す（rebuild）。置き場所は shared/format.ts が決める。ここは、その結果を書くだけ。
         // 動かした要素は、場所を書いた要素（placed）に入れない。WHY: 列で並べるセクションは中身ごと同じだけ動くので、並ぶ順を位置から読み直す理由が無い
         const plan = formatOp(doc.elements, op);
         if (!plan.ok) return fail(`${at}: ${plan.error}`);
@@ -1706,7 +1674,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
             keep(id, [...mine, ...stay].flatMap((m) => (typeof m === "string" && isSolid(byId.get(m) ?? c) ? [m] : [])));
           }
           // 高さを戻した枠の、伸びたぶんの中から始まるセクションがあれば、下へずらす。
-          // WHY: 積んだ後に、エージェントが、縮んだセクションの下を詰めている（compact）か、空いた所にセクションを足していることがある。
+          // WHY: 積んだ後に、エージェントが、縮んだセクションの下を詰めている（format）か、空いた所にセクションを足していることがある。
           // そのまま高さを戻すと、下のセクションに重なる。
           // セクションだけを見る。WHY: 枠にかかる線や付箋は、前の形でもそこにあったもので、ずらすと元に戻らない
           const h = heights.get(id);
@@ -1733,7 +1701,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         break;
       }
       default:
-        return fail(`${at}: op は add | set | rm | title | say | order | compact | template | format のどれか`);
+        return fail(`${at}: op は add | set | rm | title | say | order | template | format のどれか`);
     }
   }
 

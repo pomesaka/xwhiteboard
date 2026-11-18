@@ -246,14 +246,14 @@ describe("矢印", () => {
   const arrow = (extra: Raw): Raw => ({ id: "r", type: "arrow", from: "a", to: "b", ...extra });
   const rows: [string, Raw[], Want, string[]][] = [
     ["同じセクションの 2 つを結ぶ矢印は、書き換えない。動いた一覧に入らない", [arrow({})], { r: { from: "a", to: "b" } }, ["S", "a", "b"]],
-    ["動いたセクションと、動かなかったセクションの要素を結ぶ矢印も、書き換えない", [note("o", 24, 20, { w: 100, h: 40 }), arrow({ to: "o", route: "elbow", bends: [200] })], { r: { bends: [200] } }, ["S", "a", "b"]],
-    ["片方が座標の矢印は、座標の端が枠の中なら、同じだけ動く", [arrow({ to: [200, 800] })], { r: { from: "a", to: [200, 460] } }, ["S", "a", "b", "r"]],
+    ["動いたセクションと、動かなかったセクションの要素を結ぶ矢印も、書き換えない", [note("o", 24, 52, { w: 100, h: 24 }), arrow({ to: "o", route: "elbow", bends: [200] })], { r: { bends: [200] } }, ["S", "a", "b"]],
+    ["片方が座標の矢印は、座標の端が枠の中なら、同じだけ動く", [arrow({ to: [200, 740] })], { r: { from: "a", to: [200, 400] } }, ["S", "a", "b", "r"]],
     ["座標の端が枠の外なら、動かない", [arrow({ to: [900, 800] })], { r: { to: [900, 800] } }, ["S", "a", "b"]],
     ["両端が同じだけ動いた矢印の折れ目は、同じだけずらす（左右へ出るなら x・y の順）", [arrow({ route: "elbow", fromSide: "right", bends: [200, 650] })], { r: { bends: [200, 310] } }, ["S", "a", "b", "r"]],
     ["上下へ出る折れ目は、y・x の順", [arrow({ route: "elbow", fromSide: "bottom", bends: [650, 200, 700] })], { r: { bends: [310, 200, 360] } }, ["S", "a", "b", "r"]],
     ["出る辺を書いていなければ、相手のいる向きから読む（b は a の右）", [arrow({ route: "elbow", bends: [200, 650] })], { r: { bends: [200, 310] } }, ["S", "a", "b", "r"]],
     ["相手のいる向きは、要素の中心どうしで読む（b は a の右下で、横に遠い）", [note("c", 130, 700, { w: 300, h: 60 }), arrow({ to: "c", route: "elbow", bends: [200, 650] })], { r: { bends: [200, 310] } }, ["S", "a", "b", "c", "r"]],
-    ["座標の端を持つ矢印の折れ目も、同じだけずらす", [arrow({ to: [200, 800], route: "elbow", fromSide: "bottom", bends: [700] })], { r: { to: [200, 460], bends: [360] } }, ["S", "a", "b", "r"]],
+    ["座標の端を持つ矢印の折れ目も、同じだけずらす", [arrow({ to: [200, 740], route: "elbow", fromSide: "bottom", bends: [700] })], { r: { to: [200, 400], bends: [360] } }, ["S", "a", "b", "r"]],
   ];
   test.each(rows)("%s", (_name, els, want, moved) => {
     expect(ids(expectFormatted(board([...base, ...els]), 1, { S: { y: 160 }, ...want }))).toEqual(moved);
@@ -317,12 +317,6 @@ describe("ほかの操作と同じまとまりに書く", () => {
     // N は全体の右（564,0）に置かれてから、順（上から、左から）で 2 番めになる
     expect(res.elements.find((e) => e.id === "N")).toMatchObject({ x: 564, y: 0 });
     expect(res.elements.find((e) => e.id === "B")).toMatchObject({ x: 0, y: 160 });
-  });
-
-  test("format の後の compact では、何も変わらない", () => {
-    const done = format(board([band("s", 0, 0), sec("L", 900, 0, { locked: true, h: 200 }), sec("A", 0, 900, { h: 300 }), sec("B", 0, 1300), sec("C", 0, 1500)])).doc;
-    const r = applyOps(done, [{ op: "compact" }]);
-    expect(r.ok && r.value.updated.map((e) => e.id)).toEqual([]);
   });
 
   test("付箋に状態を付けて帯が伸びる操作と同じまとまりなら、伸びた高さで下の段を置く", () => {
@@ -611,6 +605,41 @@ describe("揃える: 帯、入れ子、中身", () => {
 
   test("枠がかかり合うセクションのあるボードは、揃えるときも断る", () => {
     expect(errorOf(board([sec("A", 0, 0, { h: 300 }), sec("B", 400, 200, { h: 300 })]), [{ op: "format" }])).toContain("ops[0]: セクション A と B の枠が重なっている");
+  });
+});
+
+describe("並べる前に、中身より背の高い自由なセクションを、中身が入る高さまで縮める", () => {
+  // S は高さ 600 で、中身の付箋の下の端は 52 + 110 = 162。縮めると 162 + 24 - 0 = 186
+  const tall = (extra: Raw = {}): Raw => sec("S", 0, 0, { h: 600, ...extra });
+  const inS = note("n", 24, 52);
+  const rows: Row[] = [
+    ["縮めて、動かない（縮めただけでも、動いた一覧に入る）", [tall(), inS], { S: { x: 0, y: 0, h: 186 } }, ["S"]],
+    ["縮めたぶん、下のセクションが詰まる", [tall(), inS, sec("B", 0, 700)], { S: { h: 186 }, B: { y: 246 } }, ["B", "S"]],
+    ["中身の無いセクションは縮めない", [tall(), sec("B", 0, 700)], { S: { h: 600 }, B: { y: 660 } }, ["B"]],
+    ["固定したセクションは縮めない", [tall({ locked: true }), inS, sec("B", 0, 700)], { S: { h: 600 }, B: { y: 700 } }, []],
+    ["固定したセクションの中のセクションも縮めない", [tall({ locked: true }), sec("I", 24, 52, { w: 300, h: 400 }), note("m", 48, 104, { w: 100, h: 40 })], { I: { h: 400 } }, []],
+    ["中のセクションを先に縮め、外はその下の端まで縮める", [tall(), sec("I", 24, 52, { w: 300, h: 400 }), note("m", 48, 104, { w: 100, h: 40 })], { I: { y: 52, h: 116 }, S: { h: 192 } }, ["I", "S"]],
+    ["左の端がそろった中のセクションも、中のセクションとして先に縮める（要素の並びで、中が先）", [sec("I", 0, 52, { w: 300, h: 400 }), note("m", 24, 104, { w: 100, h: 40 }), tall()], { I: { y: 52, h: 116 }, S: { h: 192 } }, ["I", "S"]],
+    ["中のセクションに中身が無ければ、中のセクションの下の端まで縮める", [tall(), sec("I", 24, 52, { w: 300, h: 200 })], { I: { h: 200 }, S: { h: 276 } }, ["S"]],
+    ["線、コメント、座標の矢印は、中身に数えない（枠の下にはみ出す）", [tall(), inS, { id: "l", type: "stroke", points: [[30, 400], [60, 430]] }, { id: "k", type: "comment", x: 30, y: 450, w: 60, h: 60 }, { id: "r", type: "arrow", from: [30, 500], to: [90, 540] }], { S: { h: 186 }, l: { points: [[30, 400], [60, 430]] } }, ["S"]],
+    ["表、文字、まとめの帯は、中身に数える", [tall(), { id: "t", type: "table", x: 24, y: 300, rows: [["a"]] }], { S: { h: 300 + 35 + 24 } }, ["S"]],
+  ];
+  test.each(rows)("%s", (_name, els, want, moved) => {
+    expectAligned(board(els), want, moved);
+  });
+
+  test("列で並べるセクションは、高さを変えない（もとから中身の高さ）", () => {
+    const doc = build([add({ id: "K", type: "container", x: 0, y: 0, w: 504, cols: 2 }), { op: "add", in: "K", el: { id: "a", type: "shape" } }]);
+    expect(ids(align(doc))).toEqual([]);
+  });
+
+  test("組み直すときも縮める", () => {
+    expectFormatted(board([tall(), inS, sec("B", 600, 900)]), 1, { S: { h: 186 }, B: { x: 0, y: 246 } });
+  });
+
+  test("planAlign の返す一覧にも、縮めただけの要素が入る（--dry-run）", () => {
+    const plan = planAlign(board([tall(), inS]).elements);
+    expect(plan.ok && plan.value.moved.map((e) => [e.id, e.h])).toEqual([["S", 186]]);
   });
 });
 

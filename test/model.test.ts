@@ -140,39 +140,10 @@ describe("セクションの中の要素が下へ伸びると、同じセクシ�
   });
 });
 
-describe("compact は、空きすぎた段の間を詰める", () => {
-  // 見出し、1 段め（s1 と、その隣の背の高い s2）、大きく空けて 2 段め（s3・s4）、さらに空けて文字
-  const base = build([
-    { op: "add", el: { id: "head", type: "text", x: 0, y: 0, text: "見出し" } },
-    { op: "add", el: { id: "s1", type: "container", x: 0, y: 80, w: 504, h: 600 } },
-    { op: "add", el: { id: "s2", type: "container", x: 564, y: 80, w: 504, h: 300 } },
-    { op: "add", el: { id: "m", type: "shape", x: 24, y: 132 } },
-    { op: "add", el: { id: "s3", type: "container", x: 0, y: 1500, w: 504, h: 200 } },
-    { op: "add", el: { id: "s4", type: "container", x: 564, y: 1500, w: 504, h: 200 } },
-    { op: "add", el: { id: "n", type: "shape", x: 24, y: 1552 } },
-    { op: "add", el: { id: "foot", type: "text", x: 0, y: 2400, text: "結び" } },
-  ]);
-  const compact = [{ op: "compact" }];
-  const fit = [{ op: "compact", fit: true }];
-
-  test.each([
-    ["間が 60 以下のところは動かない", compact, "s1", { y: 80, h: 600 }],
-    ["空きすぎた下の段は、上の段でいちばん背の高いものから 60 の位置まで上がる", compact, "s3", { y: 740 }],
-    ["同じ段の隣も、上をそろえて上がる", compact, "s4", { y: 740 }],
-    ["上がるセクションの中身も一緒に上がる", compact, "n", { y: 792 }],
-    ["その下の空きも詰まる", compact, "foot", { y: 1000 }],
-    ["fit を付けなければ、セクションの高さは変わらない", compact, "s1", { h: 600 }],
-    ["fit を付けると、セクションは中身が入る高さまで低くなる", fit, "s1", { y: 80, h: 186 }],
-    ["fit でも、中身の無いセクションの高さは変わらない", fit, "s2", { h: 300 }],
-    ["fit で低くなったぶんも詰まる（隣の s2 の下から 60）", fit, "s3", { y: 440 }],
-  ])("%s", (_name, ops, id, expected) => {
-    expect(find(build(ops, base), id)).toMatchObject(expected);
-  });
-
-  test("詰めるところが無ければ、何も変えない", () => {
-    const tight = build(compact, base);
-    const r = applyOps(tight, compact);
-    expect(r.ok && r.value.updated).toEqual([]);
+describe("compact は format に統合した", () => {
+  test.each([[{ op: "compact" }], [{ op: "compact", fit: true }]])("%o は、format を使うように案内して断る", (op) => {
+    const r = applyOps(emptyDoc("t"), [op]);
+    expect(r.ok ? "" : r.error).toContain("ops[0]: compact は format に統合した。xwb format を使う");
   });
 });
 
@@ -489,7 +460,7 @@ describe("cols を書いたセクションの並ぶ順は、要素の並びで�
     ["行の右端より右へ動かすと、次の行の先頭の前に入る", [[set("d", { x: 380, y: 142 })]], grid("a", "b", "d", "c")],
     ["同じ場所へ動かした要素どうしは、上の端の順に並ぶ", [[set("a", { x: 380, y: 300 }), set("b", { x: 370, y: 290 })]], grid("c", "d", "b", "a")],
     ["同じ場所へ、同じ高さに動かした要素どうしは、左の端の順に並ぶ", [[set("a", { x: 380, y: 300 }), set("b", { x: 370, y: 300 })]], grid("c", "d", "b", "a")],
-    ["並べ直した後に order で並びを変えると、前に書いた場所でなく、要素の並びで並ぶ", [[set("d", { x: 350, y: 142 }), { op: "compact" }, { op: "order", id: "d", to: "front" }]], grid("a", "b", "c", "d")],
+    ["並べ直した後に order で並びを変えると、前に書いた場所でなく、要素の並びで並ぶ", [[set("d", { x: 350, y: 142 }), { op: "format" }, { op: "order", id: "d", to: "front" }]], grid("a", "b", "c", "d")],
     ["高さだけを変えた要素は、次の行に重なっても、順が変わらない", [[set("a", { h: 300 }), set("b", { h: 300 })]], { a: { x: 124, y: 152 }, b: { x: 360, y: 152 }, c: { x: 124, y: 468 }, d: { x: 360, y: 468 }, s: { h: 502 } }],
     ["order で要素の並びを変えると、並ぶ順も変わる", [[{ op: "order", id: "a", to: "front" }]], grid("b", "c", "d", "a")],
     ["消した要素と、詰め直しで動いた要素を、1 つのまとまりで元の位置へ戻すと、元の並びに戻る", [[rm("b")], [set("c", { x: 124, y: 278 }), set("d", { x: 360, y: 278 }), shape("b", 360, 152)]], { ...grid("a", "b", "c", "d"), s: { h: 312 } }],
@@ -564,7 +535,7 @@ describe("cols を書いたセクションは、動かすと中身を連れて�
     ["in で足した後に消して、同じ id を枠の外へ座標で足した要素は、中身にならない", [[into("t1", { id: "a5" }), rm("a5"), shape("a5", 900, 900)]], { a5: { x: 900, y: 900 }, t1: { h: 312 } }],
     ["in で足した要素に、同じまとまりで付けたコメントは、書いた場所に残る", [[into("t1", { id: "a5" }), comment("k", 30, 310, { on: "a5" })]], { a5: { x: 24, y: 304 }, k: { x: 30, y: 310 } }],
     ["in で足した後に、同じまとまりで cols を外しても、足した要素は並べた場所にある", [[into("t1", { id: "a5" }), set("t1", { cols: null })]], { a5: { x: 24, y: 304 } }],
-    ["消した後に、同じまとまりで compact すると、空いた段が詰まる", [[into("t1", { id: "a5" }), shape("u", 0, 498)], [rm("a5"), rm("a4"), rm("a3"), { op: "compact" }]], { t1: { h: 186 }, u: { y: 246 } }],
+    ["消した後に、同じまとまりで format すると、空いた段が詰まる", [[into("t1", { id: "a5" }), sec("u", 0, 498)], [rm("a5"), rm("a4"), rm("a3"), { op: "format" }]], { t1: { h: 186 }, u: { y: 246 } }],
     // 伸びる、高さを書く
     ["下の要素を指すコメントは、押し下げに付いていく", [[shape("u", 0, 372), comment("k", 500, 10, { on: "u" })], [into("t1", { id: "a5" })]], { u: { y: 498 }, k: { x: 500, y: 136 } }],
     ["下の端にかかる線は、押し下げない。その下のものも、余計に押し下げない", [[stroke("l", [[30, 300], [60, 330]]), shape("below", 0, 600)], [into("t1", { id: "a5" })]], { l: { points: [[30, 300], [60, 330]] }, below: { y: 600 }, t1: { h: 438 } }],

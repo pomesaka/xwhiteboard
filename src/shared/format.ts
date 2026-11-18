@@ -1,9 +1,10 @@
 // 並べ直し（format）。セクションとまとめの帯を、詰めて置き直す。1 回かぎりの操作で、ボードに構造は足さない。
 // やり方は 2 つ。揃える（既定。planAlign）は、今の列を保って、列の位置と縦の間を揃える。
 // 組み直す（rebuild。planRebuild）は、今の列を使わず、上の段と cols 列の下の段に置き直す。
+// どちらも、置く前に、中身より背の高い自由なセクションを、中身が入る高さまで縮める（fitSections）。
 // 置き場所の計算は、ここの 2 つの関数にある。ボードを書き換えずに、動かした後の要素を返す。
 // 操作（applyOps の format）も、CLI の --dry-run も、同じ結果を使う。
-import { OUTER_GAP, boxOf, isSolid, ridersOf, shifted, type Box, type El, type Point, type Res } from "./model.ts";
+import { OUTER_GAP, PAD, boxOf, isSolid, ridersOf, shifted, type Box, type El, type Point, type Res } from "./model.ts";
 import { facing } from "./route.ts";
 
 /** 組み直すときの、下の段の列の数。書かなかったときの数と、上限 */
@@ -83,6 +84,63 @@ export function formatOp(els: readonly El[], op: Record<string, unknown>): Res<F
   return planRebuild(els, cols);
 }
 
+/** 今の列を保って、列の位置と縦の間を揃えた結果を返す。先に fitSections で縮める。els は書き換えない。決まりは alignFitted にある */
+export function planAlign(els: readonly El[]): Res<FormatPlan> {
+  return withFit(els, alignFitted);
+}
+
+/** 今の列を使わずに組み直した結果を返す。先に fitSections で縮める。els は書き換えない。決まりは rebuildFitted にある */
+export function planRebuild(els: readonly El[], cols: number): Res<FormatPlan> {
+  return withFit(els, (fitted) => rebuildFitted(fitted, cols));
+}
+
+/** 縮めてから並べ、縮めただけの要素と、動いた要素を、ボードの要素の並びの順に返す */
+function withFit(els: readonly El[], place: (fitted: readonly El[]) => Res<FormatPlan>): Res<FormatPlan> {
+  const fitted = fitSections(els);
+  const plan = place(fitted);
+  if (!plan.ok) return plan;
+  const moved = new Map(plan.value.moved.map((el) => [el.id, el]));
+  return { ok: true, value: { moved: fitted.flatMap((el, i) => moved.get(el.id) ?? (el === els[i] ? [] : [el])) } };
+}
+
+/**
+ * 中身より背の高い自由なセクション（cols を書かないもの）を、中身が入る高さ（中身のいちばん下の端 + PAD）まで縮めた要素を返す。
+ * 変えない要素は、同じ物を返す（withFit が、縮めた要素を物の同一性で見分ける）。
+ * - 中身の無いセクションは縮めない。人が場所を取っておいた枠のことがある
+ * - 固定したセクションと、固定したセクションの枠に収まったセクションは縮めない（format は固定したものを中身ごと動かさない）
+ * - 中身に数えるのは、枠の中の、場所をふさぐ要素（付箋、文字、表、画像、ガント）と、まとめの帯と、中のセクション（中身ごと）。中のセクションを先に縮める
+ *   WHY 中のセクションも数える: 数えないと、外の枠が中のセクションを切って縮み、枠がかかり合って format が断る
+ *   WHY 線、座標の矢印、コメントは数えない: 並べるときに障害物にしないので、動いた枠が外の線を取り込むことがある。
+ *   取り込んだ線で高さが決まると、もう一度かけたときに縮み方が変わる。縮めた枠の下にはみ出した線と矢印は、中身でなくなり、セクションと一緒に動かない
+ */
+export function fitSections(els: readonly El[]): El[] {
+  const out = [...els];
+  const index = new Map(els.map((el, i) => [el.id, i]));
+  const within = (a: Box, o: Box): boolean => o.x <= a.x && o.y <= a.y && a.x + a.w <= o.x + o.w && a.y + a.h <= o.y + o.h;
+  const sections = els.flatMap((c) => {
+    const b = c.type === "container" ? boxOf(c) : null;
+    return b ? [{ c, b }] : [];
+  });
+  const lockedBoxes = sections.flatMap(({ c, b }) => (c.locked === true ? [b] : []));
+  // 小さい順に縮める。中のセクションは外のセクションより小さい
+  for (const { c, b } of [...sections].sort((p, q) => p.b.w * p.b.h - q.b.w * q.b.h)) {
+    // 固定したセクション自身も、lockedBoxes の自分の枠に収まるので、ここで外れる
+    if (c.cols !== undefined || lockedBoxes.some((l) => within(b, l))) continue;
+    const i = index.get(c.id) ?? -1;
+    const now = out[i];
+    if (!now) continue;
+    const bottoms = ridersOf(out, now).flatMap((m) => {
+      const mb = isSolid(m) || m.type === "container" || m.type === "summary" ? boxOf(m) : null;
+      // セクションは、枠に収まった中のセクションだけ。中心が枠の中にあっても、外のセクションは数えない
+      return mb && (m.type !== "container" || within(mb, b)) ? [mb.y + mb.h] : [];
+    });
+    if (bottoms.length === 0) continue;
+    const need = Math.max(...bottoms) + PAD - b.y;
+    if (need < b.h) out[i] = { ...now, h: need };
+  }
+  return out;
+}
+
 /** 揃えるときも組み直すときも同じ、並べる対象と、一緒に動く要素と、障害物の候補 */
 interface Prepared {
   sized: readonly El[];
@@ -151,7 +209,7 @@ function prepare(els: readonly El[]): Res<Prepared> {
  * 列全体の範囲で見ると、先頭より左にはみ出した見出しは、揃えた後の列（左の端が先頭の左の端になる）の範囲から外れる。
  * 2 回めは見出しでなく障害物に数えられ、列が下へよけて、もう一度かけると結果が変わる。
  */
-export function planAlign(els: readonly El[]): Res<FormatPlan> {
+function alignFitted(els: readonly El[]): Res<FormatPlan> {
   const prep = prepare(els);
   if (!prep.ok) return prep;
   const { sized, boxes, outer, bands, rides, claimed } = prep.value;
@@ -257,7 +315,7 @@ export function planAlign(els: readonly El[]): Res<FormatPlan> {
  * 置いたセクションより左の列は、そのセクションをよけて置けた高さから、右の列は、そのセクションを置いた高さから下だけを使う。
  * WHY 最初のセクションを左の端の列に置く: 左の端の列が空くと、全体の左上（起点）が右へずれて、2 回めの列の場所が変わる。
  */
-export function planRebuild(els: readonly El[], cols: number): Res<FormatPlan> {
+function rebuildFitted(els: readonly El[], cols: number): Res<FormatPlan> {
   const prep = prepare(els);
   if (!prep.ok) return prep;
   const { boxes, outer, bands, rides } = prep.value;
