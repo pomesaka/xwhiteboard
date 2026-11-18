@@ -7,6 +7,7 @@ import { api, ensureServer, ping, port } from "./local.ts";
 import { BOARD_EXT, DEFAULT_PORT, startServer } from "./server/server.ts";
 import { loadToken } from "./server/token.ts";
 import { boxOf, isRecord, parseEl, serialize } from "./shared/model.ts";
+import { itemsOf, summarize, withSummaryHeights } from "./shared/summary.ts";
 
 const USAGE = `xwb: ローカルで動くホワイトボード
 
@@ -17,7 +18,8 @@ const USAGE = `xwb: ローカルで動くホワイトボード
   xwb rm <board> <id>...                        要素を消す
   xwb apply <board> [json|-]                    add・set・rm・title をまとめて 1 回で行う
   xwb title <board> <題名>                      題名を変える
-  xwb ls <board>                                要素の一覧（文字と表は見積もった w・h 付き）
+  xwb ls <board>                                要素の一覧（文字と表は見積もった w・h 付き。まとめの帯は h と items 付き）
+  xwb summary <board>                           付箋の状態ごとの一覧（決定・未決・宿題・持ち越し・優先）
   xwb claim <board> <json>                      書き込み中の範囲を枠で示す（{x,y,w,h,label,ttl}）
   xwb unclaim <board> [id]                      枠を消す
   xwb focus <board> [セクションの id]            話している議題のセクションを残して、ほかを薄くする（id 無しでやめる）
@@ -146,11 +148,21 @@ async function main(): Promise<void> {
     case "ls": {
       const j = await request(`/api/board?board=${encodeURIComponent(boardArg(pos[0]))}`, {});
       if (!isRecord(j)) throw new CliError("ボードを読めない");
-      // 描画できない CLI でも重なりを判断できるよう、文字と表には見積もった大きさを足して返す
-      const elements = (Array.isArray(j.elements) ? j.elements : []).map((raw: unknown) => {
+      // 描画できない CLI でも重なりを判断できるよう、文字と表には見積もった大きさを足して返す。
+      // まとめの帯には、今の行の数からの高さ（h）と、集めた付箋の id（items）を足す
+      const raws: unknown[] = Array.isArray(j.elements) ? j.elements : [];
+      const parsed = raws.flatMap((raw) => {
         const el = parseEl(raw);
-        const box = el.ok ? boxOf(el.value) : null;
-        return isRecord(raw) && box && (raw.type === "text" || raw.type === "table") ? { ...raw, w: box.w, h: box.h } : raw;
+        return el.ok ? [el.value] : [];
+      });
+      const summary = summarize(parsed);
+      const sized = new Map(withSummaryHeights(parsed).map((el) => [el.id, el]));
+      const elements = raws.map((raw: unknown) => {
+        const el = isRecord(raw) && typeof raw.id === "string" ? sized.get(raw.id) : undefined;
+        const box = el ? boxOf(el) : null;
+        if (!isRecord(raw) || !el || !box) return raw;
+        if (el.type === "summary") return { ...raw, w: box.w, h: box.h, items: itemsOf(summary, el).map((i) => i.id) };
+        return el.type === "text" || el.type === "table" ? { ...raw, w: box.w, h: box.h } : raw;
       });
       print({ title: j.title, elements });
       return;
@@ -167,6 +179,12 @@ async function main(): Promise<void> {
       const res = await call("/api/ops", { board: boardArg(pos[0]), ops: [{ op: "compact", fit: flags.has("--fit") }] });
       // 動いた要素は多いので、id だけを返す
       print(isRecord(res) && Array.isArray(res.updated) ? { moved: res.updated.map((e) => (isRecord(e) ? e.id : e)) } : res);
+      return;
+    }
+    case "summary": {
+      // 付箋の状態ごとの一覧。まとめの帯の要素がボードに無くても使える
+      const res = await request(`/api/summary?board=${encodeURIComponent(boardArg(pos[0]))}`, {});
+      print(res);
       return;
     }
     case "check": {

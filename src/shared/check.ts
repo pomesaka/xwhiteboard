@@ -1,9 +1,10 @@
 // ボードの見た目の問題を、描かずに測る。エージェントが、スクショを見なくても崩れに気づけるようにする。
 // 文字と表の大きさは見積もり（model.ts の sizeOf）なので、画面で測った値とは数 px ずれる。
-import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, metaParts, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
+import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, membersOf, metaParts, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
+import { withSummaryHeights } from "./summary.ts";
 import { bareUrls, isBoardRef, parseRich, plainText, type MarkColor } from "./rich.ts";
 import { LABEL_FONT, LABEL_LIFT, arrowPath, labelSpot } from "./route.ts";
 
@@ -49,7 +50,13 @@ export type IssueKind =
   /** セクションに論点（question）があって、結論（answer）が無い */
   | "open-question"
   /** 列で並べるセクション（cols）の中に、別のセクションがある */
-  | "nested-section";
+  | "nested-section"
+  /** 同じ状態を集めるまとめの帯（summary）が、2 つ以上ある */
+  | "duplicate-summary"
+  /** 固定したセクションの中に、同じ状態の付箋が並んでいる（手で写したまとめ） */
+  | "manual-summary"
+  /** まとめの帯が、セクションの中にある */
+  | "summary-in-section";
 
 export interface Issue {
   kind: IssueKind;
@@ -338,8 +345,45 @@ function checkRepeats(doc: Doc): Issue[] {
   return issues;
 }
 
-export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
+/** まとめの帯の使い方の検査 */
+function summaryIssues(doc: Doc): Issue[] {
   const issues: Issue[] = [];
+  // 同じ状態を集める帯が 2 つ以上
+  const byShow = new Map<string, string[]>();
+  for (const el of doc.elements) if (el.type === "summary" && el.show !== undefined) byShow.set(el.show, [...(byShow.get(el.show) ?? []), el.id]);
+  for (const [show, ids] of byShow) {
+    if (ids.length >= 2) issues.push({ kind: "duplicate-summary", ids, message: `show が ${show} のまとめの帯が ${ids.length} つある（${ids.join("・")}）。同じ一覧が並ぶので、1 つを残して消す` });
+  }
+  for (const c of doc.elements) {
+    if (c.type !== "container") continue;
+    const members = membersOf(doc.elements, c);
+    // 帯は、セクションの外に置く。中に置いたときの並び方と押し下げは、決めていない
+    for (const m of members) {
+      if (m.type === "summary") issues.push({ kind: "summary-in-section", ids: [m.id, c.id], message: `まとめの帯 ${m.id} が、セクション ${c.id} の中にある。帯は、セクションの外に置く（x・y を set で書く）` });
+    }
+    // 手で写したまとめ。固定したセクションに、同じ状態の付箋が 2 枚以上並ぶ形だけを拾う
+    // WHY 狭く拾う: 固定したセクションは、まとめのほかにも使う（凡例、注意書き）。状態のそろった付箋が並ぶのは、まとめだけ
+    if (c.locked !== true) continue;
+    const noted = members.flatMap((m) => {
+      const status = m.type === "shape" ? statusBadge(m)?.status : undefined;
+      return status === undefined ? [] : [{ id: m.id, status }];
+    });
+    const status = noted[0]?.status;
+    if (noted.length < 2 || status === undefined || noted.some((n) => n.status !== status)) continue;
+    issues.push({
+      kind: "manual-summary",
+      ids: [c.id],
+      message: `固定したセクション ${c.id} の中に、状態が ${status} の付箋が並んでいる（${noted.map((n) => n.id).join("・")}）。手で写したまとめは、元の付箋を直しても変わらない。セクションと中の付箋を消して、まとめの帯（{"type":"summary","show":"${status}","x":${c.x ?? 0},"y":${c.y ?? 0}}）に替える。中の付箋が写しでなく元の付箋なら、消さずに議題のセクションへ移す`,
+    });
+  }
+  return issues;
+}
+
+export function checkBoard(raw: Doc, ctx: CheckContext = {}): Issue[] {
+  // まとめの帯の高さは、ほかの付箋の状態で決まる。重なりを測る前に、今の行の数からの高さを入れる
+  const doc: Doc = { ...raw, elements: withSummaryHeights(raw.elements) };
+  const issues: Issue[] = [];
+  issues.push(...summaryIssues(doc));
   // リンクの形で書いていない URL。画面ではただの文字で出て、押せない
   for (const el of doc.elements) {
     const found = richTexts(el).flatMap(bareUrls);
@@ -391,7 +435,9 @@ export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
       const box = boxOf(el);
       return box ? [{ el, box }] : [];
     });
-  const solids = boxed(doc.elements.filter(isSolid));
+  // WHY まとめの帯をここで足す: 帯も場所をふさぐが、isSolid には入れない。isSolid は、列で並べるセクションの中身と、自動で置くときによける相手も決める。
+  // 帯を入れると、列のセクションの枠に入った帯が、中身として並べられて幅を書き換えられる
+  const solids = boxed(doc.elements.filter((el) => isSolid(el) || el.type === "summary"));
   const sections = boxed(doc.elements.filter((e) => e.type === "container"));
 
   // 中身どうしの重なり

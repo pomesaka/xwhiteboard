@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { boundsOf, type Doc, type Res } from "../shared/model.ts";
+import { withSummaryHeights } from "../shared/summary.ts";
 
 const BROWSERS = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -28,7 +29,8 @@ function findBrowser(): string | null {
 export async function shoot(pageUrl: string, doc: Doc, out: string, scale: number, comments: boolean): Promise<Res<{ out: string; width: number; height: number }>> {
   const browser = findBrowser();
   if (!browser) return { ok: false, error: "Chrome が見つからない。XWB_CHROME に Chrome か Chromium の実行ファイルのパスを入れる" };
-  const b = boundsOf(doc.elements, comments);
+  // まとめの帯の高さは、集めた行の数で決まる。窓の大きさを決める前に入れる
+  const b = boundsOf(withSummaryHeights(doc.elements), comments);
   if (!b) return { ok: false, error: "要素が無いので書き出せない" };
   const w = Math.max(400, Math.ceil(b.w + SHOT_MARGIN * 2));
   const h = Math.max(300, Math.ceil(b.h + SHOT_MARGIN * 2));

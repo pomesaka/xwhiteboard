@@ -5,7 +5,7 @@ import { isBoardRef, plainText } from "./rich.ts";
 import { expandTemplate } from "./template.ts";
 import { SIDES, type Side } from "./route.ts";
 
-export const TYPES = ["shape", "container", "text", "arrow", "table", "image", "stroke", "comment", "gantt"] as const;
+export const TYPES = ["shape", "container", "text", "arrow", "table", "image", "stroke", "comment", "gantt", "summary"] as const;
 export const SPEAKERS = ["human", "claude"] as const;
 export const COLORS = ["yellow", "orange", "red", "pink", "purple", "blue", "teal", "green", "gray", "white", "ink"] as const;
 export const SHAPES = ["note", "rect", "round", "pill", "ellipse", "diamond", "hexagon", "parallelogram", "cylinder", "document", "queue", "cloud"] as const;
@@ -109,6 +109,8 @@ export interface El {
   status?: NoteStatus;
   /** 持ち越しの元の会議の日付。札に「持ち越し 11/11」と出す。本文に日付を書かないので、同じ日付の繰り返しの検査にかからない */
   carriedFrom?: string;
+  /** まとめの帯（summary）が集める、付箋の状態 */
+  show?: NoteStatus;
   /** 付箋と図形の、宿題の期限。YYYY-MM-DD か YYYY-MM。札の段に「〆11/20」と出す */
   due?: string;
   /** セクションの中身を、この列の数で詰めて並べる。書くと、中身の位置と幅、セクションの高さを xwb が決める */
@@ -168,6 +170,8 @@ const FIELDS: Record<ElType, readonly string[]> = {
   comment: ["x", "y", "w", "h", "on", "thread", "resolved", "unsent"],
   // 高さは、行の数から決まる
   gantt: ["x", "y", "w", "labelW", "title", "unit", "start", "end", "bars", "marks", "today"],
+  // まとめの帯。高さは、集めた行の数から決まる。h は受け取って捨てる（画面の「元に戻す」とファイルが、h の付いた帯を渡すため。cols のセクションの h と同じ扱い）
+  summary: ["x", "y", "w", "h", "show", "title", "color"],
 };
 
 const REQUIRED: Record<ElType, readonly string[]> = {
@@ -180,7 +184,23 @@ const REQUIRED: Record<ElType, readonly string[]> = {
   table: ["x", "y", "rows"],
   image: ["x", "y", "w", "h"],
   stroke: ["points"],
+  summary: ["x", "y", "show"],
 };
+
+/**
+ * まとめの帯の大きさ。題名の帯の高さ、1 行の高さ、下の余白、既定の幅、幅の下限。
+ * 画面の CSS（board.css の .summary）と同じ値。片方だけ変えると、置く場所と見た目がずれる
+ */
+export const SUMMARY_HEAD_H = 52;
+export const SUMMARY_ROW_H = 28;
+export const SUMMARY_PAD_BOTTOM = 12;
+export const SUMMARY_W = 480;
+export const SUMMARY_MIN_W = 240;
+
+/** 行の数から決まる、まとめの帯の高さ。0 行のときは「無し」の 1 行を出すので、1 行と同じ */
+export function summaryHeight(rows: number): number {
+  return SUMMARY_HEAD_H + Math.max(1, rows) * SUMMARY_ROW_H + SUMMARY_PAD_BOTTOM;
+}
 
 export const DEFAULT_SIZE = {
   shape: { w: 220, h: 110 },
@@ -263,6 +283,10 @@ export function parseEl(raw: unknown): Res<El> {
       case "status":
         if (!isOneOf(NOTE_STATUS, v)) return fail(`status は ${NOTE_STATUS.join(" | ")} のどれか`);
         el.status = v;
+        break;
+      case "show":
+        if (!isOneOf(NOTE_STATUS, v)) return fail(`show は ${NOTE_STATUS.join(" | ")} のどれか 1 つ`);
+        el.show = v;
         break;
       case "carriedFrom":
         if (typeof v !== "string" || parseDay(v, false) === null) return fail("carriedFrom は YYYY-MM-DD か YYYY-MM の日付");
@@ -447,6 +471,10 @@ export function parseEl(raw: unknown): Res<El> {
   }
   if (el.carriedFrom !== undefined && el.status !== undefined && el.status !== "carried" && el.status !== "todo") return fail("carriedFrom を書くなら、status は carried か todo か、書かない");
   if (type === "image" && (el.src === undefined) === (el.svg === undefined)) return fail("image には src か svg のどちらか 1 つを書く");
+  if (type === "summary") {
+    if (el.w !== undefined && el.w < SUMMARY_MIN_W) return fail(`summary の w は ${SUMMARY_MIN_W} 以上（行の文字が入らない）`);
+    delete el.h;
+  }
   return ok(el);
 }
 
@@ -687,6 +715,9 @@ export function sizeOf(el: El): { w: number; h: number } {
       const layout = ganttLayout(el);
       return { w: layout.w, h: layout.h };
     }
+    case "summary":
+      // 高さは、集めた行の数から決まる（summary.ts の withSummaryHeights が h に入れる）。まだ入っていなければ、1 行ぶん
+      return { w: el.w ?? SUMMARY_W, h: el.h ?? summaryHeight(1) };
     default:
       return { w: el.w ?? 0, h: el.h ?? 0 };
   }
@@ -1079,7 +1110,7 @@ export interface CommentPayload {
   elements: Record<string, unknown>[];
 }
 
-const TEXT_FIELDS = ["text", "tag", "title", "question", "answer", "who", "status", "carriedFrom", "due", "label", "head", "rows", "color", "shape", "bars", "marks"] as const;
+const TEXT_FIELDS = ["text", "tag", "title", "question", "answer", "who", "status", "carriedFrom", "due", "show", "label", "head", "rows", "color", "shape", "bars", "marks"] as const;
 
 function briefOf(el: El): Record<string, unknown> {
   const rec: Record<string, unknown> = { ...el };

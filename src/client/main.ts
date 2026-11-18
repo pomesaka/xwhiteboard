@@ -1,4 +1,4 @@
-import { ALIGNS, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, TABLE_COL, isOverdue, localDay, metaParts, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
+import { ALIGNS, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, SUMMARY_MIN_W, SUMMARY_W, TABLE_COL, dueLabel, isOverdue, localDay, metaParts, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
 
 import { LABEL_LIFT, arrowPath, labelSpot, routeArrow, type RouteEnd } from "../shared/route.ts";
 import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
@@ -7,6 +7,7 @@ import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, 
 import type { EndMark, ShapeKind } from "../shared/model.ts";
 import { dropMissing, restoreOps, withGeometry } from "../shared/restore.ts";
 import { focusLabel, keptOnFocus } from "../shared/focus.ts";
+import { itemsOf, summarize, withSummaryHeights, type Summary } from "../shared/summary.ts";
 
 const SVG_NS ="http://www.w3.org/2000/svg";
 const params = new URLSearchParams(location.search);
@@ -59,7 +60,7 @@ type Gesture =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   // pinId: コメントの印を押して始めたときの、そのコメントの id。動かさずに離したら、やりとりを開く
   // link: リンクの上で押して始めたときの、そのリンク。動かさずに離したら、リンクを開く
-  | { kind: "move"; start: Point; orig: Map<string, El>; moved: boolean; pinId: string | null; link: HTMLAnchorElement | null }
+  | { kind: "move"; start: Point; orig: Map<string, El>; moved: boolean; pinId: string | null; link: HTMLAnchorElement | null; jump: string | null }
   | { kind: "resize"; start: Point; orig: El; w: number; h: number }
   // purpose: 範囲で選ぶ、セクションを描く、コメントを置く。onId は、コメントの道具で押した場所にあった要素
   | { kind: "marquee"; start: Point; sx: number; sy: number; purpose: "select" | "container" | "comment"; onId: string | null }
@@ -140,7 +141,7 @@ function zoomAt(cx: number, cy: number, k: number): void {
 
 /** 高さが中身から決まる要素。人が変えられるのは幅だけ */
 function widthOnly(el: El): boolean {
-  return el.type === "text" || el.type === "table" || el.type === "gantt";
+  return el.type === "text" || el.type === "table" || el.type === "gantt" || el.type === "summary";
 }
 
 /** 画面で測った四角。文字と表の大きさは、見積もりではなく描いた結果を使う */
@@ -294,6 +295,7 @@ function defaultColor(el: El): string {
     case "shape":
       return el.shape === undefined || el.shape === "note" ? "yellow" : "white";
     case "container":
+    case "summary":
       return "gray";
     default:
       return "ink";
@@ -399,7 +401,8 @@ function renderEl(el: El): void {
   n.style.left = `${el.x ?? 0}px`;
   n.style.top = `${el.y ?? 0}px`;
   // 表は幅を書かなくても、見積もり（sizeOf）と同じ幅で描く。幅が無いと、空の表が潰れて見えなくなる
-  const width = el.type === "table" ? (el.w ?? tableCols(el) * TABLE_COL) : el.w;
+  // まとめの帯も、幅を書かなければ既定の幅で描く（幅が無いと、行の文字の長さで帯の幅が変わる）
+  const width = el.type === "table" ? (el.w ?? tableCols(el) * TABLE_COL) : el.type === "summary" ? (el.w ?? SUMMARY_W) : el.w;
   n.style.width = width === undefined ? "" : `${width}px`;
   n.style.height = el.h === undefined || el.type === "text" || el.type === "table" ? "" : `${el.h}px`;
   // 人が直している最中の欄は、ほかからの更新で描き直さない（入力中の文字が消えるため）
@@ -488,6 +491,9 @@ function renderEl(el: El): void {
     case "gantt":
       renderGantt(el, n);
       break;
+    case "summary":
+      renderSummary(el, n);
+      break;
     case "image": {
       const img = document.createElement("img");
       img.draggable = false;
@@ -512,6 +518,61 @@ function renderEl(el: El): void {
       break;
     }
   }
+}
+
+// ---- まとめの帯 ----
+
+/** 付箋の状態ごとの一覧。帯を描くたびに集め直さないように、要素が変わったとき（syncSummaries）に作り直す */
+let summary: Summary = summarize([]);
+
+/**
+ * まとめの帯を、今の付箋に合わせる。帯の高さ（h）を手元の要素に入れ、帯を描き直す。
+ * WHY 手元で入れる: 帯の高さは、ほかの付箋の状態で決まる。選択の枠や取っ手の位置に、要素の h を使う
+ */
+function syncSummaries(): void {
+  const all = [...els.values()];
+  if (!all.some((e) => e.type === "summary")) return;
+  summary = summarize(all);
+  for (const el of withSummaryHeights(all)) {
+    if (el.type !== "summary") continue;
+    els.set(el.id, el);
+    renderEl(el);
+  }
+}
+
+/** 帯の中身。題名と、集めた付箋の行。行は、押すと元の付箋へ移る（行の中身は、元の付箋で直す） */
+function renderSummary(el: El, n: HTMLElement): void {
+  const items = itemsOf(summary, el);
+  const head = div("shead");
+  head.append(div(`stitle st-${el.show ?? "open"}`, el.title?.trim() || (el.show ? STATUS_LABEL[el.show] : "")), div("scount", `${items.length} 件`));
+  n.append(head);
+  if (items.length === 0) n.append(div("srow none", "無し"));
+  const today = localDay(new Date());
+  for (const item of items) {
+    const row = div("srow");
+    row.dataset.target = item.id;
+    row.title = item.label;
+    row.append(div("slabel", item.label));
+    if (item.section?.title !== undefined) row.append(div("ssection", item.section.title));
+    const source = els.get(item.id);
+    const due = source ? dueLabel(source) : null;
+    // 書き出しの画面では、期限切れの色を付けない（付箋の札と同じ決まり）
+    if (source && due) row.append(div(!exporting && isOverdue(source, today) ? "sdue overdue" : "sdue", due));
+    if (item.who !== undefined) row.append(div("swho", item.who));
+    n.append(row);
+  }
+}
+
+/** 要素が画面の真ん中に来るように移り、その要素を選ぶ。倍率は変えない */
+function jumpTo(id: string): void {
+  const el = els.get(id);
+  const b = el ? rectOf(el) : null;
+  if (!b) return;
+  view.x = stage.clientWidth / 2 - (b.x + b.w / 2) * view.k;
+  view.y = stage.clientHeight / 2 - (b.y + b.h / 2) * view.k;
+  applyView();
+  select([id]);
+  flash([id]);
 }
 
 // ---- ガントチャート ----
@@ -900,6 +961,7 @@ function applyFocus(): void {
 }
 
 function refresh(): void {
+  syncSummaries();
   fitFocus();
   applyFocus();
   renderLines();
@@ -1417,6 +1479,12 @@ function startEdit(id: string, target: EventTarget | null): void {
     editSectionField(el, target.closest(".sq") ? "question" : "answer");
     return;
   }
+  if (el.type === "summary") {
+    // 帯で直せるのは題名だけ。行の中身は、元の付箋で直す
+    const v = prompt("まとめの帯の題名（空にすると、状態の名前に戻る）", el.title ?? "");
+    if (v !== null) void setOps([{ id, patch: { title: v === "" ? null : v } }]);
+    return;
+  }
   if (el.type === "gantt") {
     // 行の名前の上なら行の名前を、それ以外なら題名を直す
     const row = target instanceof Element ? target.closest("[data-bar]") : null;
@@ -1635,7 +1703,15 @@ stage.addEventListener("pointerdown", (ev) => {
       if (el && b) gesture = { kind: "resize", start: p, orig: el, w: b.w, h: b.h };
     } else if (id) {
       // 固定した要素は、選ぶことだけできる（固定を外すため）。動かす、直す、ガントの帯を動かす操作は始めない
+      // まとめの帯の行。動かさずに離したら、元の付箋へ移る
+      const rowNode = ev.target instanceof Element ? ev.target.closest(".srow[data-target]") : null;
+      const jump = rowNode instanceof HTMLElement ? (rowNode.dataset.target ?? null) : null;
       if (isLocked(els.get(id))) {
+        // 固定した帯でも、行から元の付箋へは移れる（読むための操作なので）
+        if (jump) {
+          jumpTo(jump);
+          return;
+        }
         select(ev.shiftKey ? [...selection, id] : [id]);
         // コメントの印だけは、固定していても開ける（読むための操作なので）
         if (pinId && openComment === pinId) closeComment();
@@ -1667,7 +1743,7 @@ stage.addEventListener("pointerdown", (ev) => {
       if (ev.shiftKey) select(selection.has(id) ? [...selection].filter((x) => x !== id) : [...selection, id]);
       else if (!selection.has(id)) select([id]);
       const link = ev.target instanceof Element ? ev.target.closest("a[href]") : null;
-      gesture = { kind: "move", start: p, orig: movingSet(), moved: false, pinId, link: link instanceof HTMLAnchorElement ? link : null };
+      gesture = { kind: "move", start: p, orig: movingSet(), moved: false, pinId, link: link instanceof HTMLAnchorElement ? link : null, jump };
     } else {
       if (!ev.shiftKey) select([]);
       gesture = { kind: "marquee", start: p, sx, sy, purpose: "select", onId: null };
@@ -1719,7 +1795,8 @@ stage.addEventListener("pointermove", (ev) => {
       break;
     }
     case "resize": {
-      const w = Math.max(40, round(g.w + p[0] - g.start[0]));
+      // まとめの帯は、幅の下限で止める（それより狭い幅は、サーバーが断る）
+      const w = Math.max(g.orig.type === "summary" ? SUMMARY_MIN_W : 40, round(g.w + p[0] - g.start[0]));
       const h = Math.max(30, round(g.h + p[1] - g.start[1]));
       const local = els.get(g.orig.id) ?? g.orig;
       const next: El = widthOnly(g.orig) ? { ...local, w } : { ...local, w, h };
@@ -1778,6 +1855,7 @@ function endGesture(ev: PointerEvent): void {
         // コメントの印を、動かさずに離した。やりとりを開く（開いていれば閉じる）
         // WHY ここで開く: 押している間はポインターを stage が受け取るので、リンクそのもののクリックは起きない
         if (g.link) void openLink(g.link);
+        if (g.jump) jumpTo(g.jump);
         if (g.pinId && openComment === g.pinId) closeComment();
         else if (g.pinId) openCommentPanel(g.pinId);
         break;

@@ -443,6 +443,101 @@
   margin-left: 0;
 }
 
+/* まとめの帯。付箋の状態から集めた一覧。題名の帯（52）、1 行（28）、下の余白（12）は、見積もり（model.ts の SUMMARY_*）と同じ値 */
+.summary {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--el-bg) 38%, var(--board-surface));
+  border: 1.5px solid var(--el-bd);
+  border-radius: 14px;
+  color: var(--foreground);
+}
+.summary .shead {
+  flex: none;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+}
+/* 題名は、集める状態の色の札。付箋の状態の札と同じ色で、どの状態の一覧かが分かる */
+.summary .stitle {
+  min-width: 0;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--st);
+  color: var(--board-on-dark);
+  font-size: var(--board-text-section);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary .scount {
+  flex: none;
+  font-size: var(--board-text-label);
+  color: var(--board-text-muted);
+}
+/* 行は折り返さない。入りきらない文字は「…」で切る（高さが行の数だけで決まるように） */
+.summary .srow {
+  flex: none;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-top: 1px solid var(--board-line-soft);
+  font-size: var(--board-text-table);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.summary .srow:hover {
+  background: var(--board-band);
+}
+.summary .srow.none {
+  color: var(--board-text-faint);
+  cursor: default;
+}
+.summary .srow.none:hover {
+  background: none;
+}
+.summary .slabel {
+  flex: 1 1 auto;
+  min-width: 2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* どのセクションの付箋か。見出しより先に縮む */
+.summary .ssection {
+  flex: 0 1000000 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--board-text-tag);
+  font-weight: 700;
+  color: var(--board-text-faint);
+}
+.summary .sdue,
+.summary .swho {
+  flex: none;
+  font-size: var(--board-text-tag);
+  font-weight: 700;
+  color: var(--board-text-muted);
+}
+.summary .sdue.overdue {
+  color: var(--status-overdue);
+}
+.summary .swho {
+  padding: 0 6px;
+  border-radius: 999px;
+  line-height: 1.5;
+  background: var(--board-surface);
+  box-shadow: inset 0 0 0 1px var(--board-line);
+}
+
 .table table {
   width: 100%;
   border-collapse: collapse;

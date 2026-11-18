@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
 import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, localDay, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
 import { checkBoard } from "../shared/check.ts";
+import { summarize } from "../shared/summary.ts";
 import { resolveBoardRef } from "../shared/rich.ts";
 import { shoot } from "./shot.ts";
 import { loadToken, sameToken } from "./token.ts";
@@ -315,6 +316,8 @@ export async function startServer(port: number): Promise<void> {
         commitOps(board, [{ op: "set", id, patch: { unsent: null } }], client);
         return json({ sessions: targets.length });
       }
+      case "GET /api/summary":
+        return json(summarize(getBoard(boardPath(q.get("board"))).doc.elements));
       case "GET /api/check": {
         const board = getBoard(boardPath(q.get("board")));
         return json({ issues: checkBoard(board.doc, { boardExists: (ref) => existsSync(resolveBoardRef(board.path, ref)), today: localDay(new Date()) }) });

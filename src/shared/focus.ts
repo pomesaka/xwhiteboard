@@ -4,7 +4,7 @@ import { membersOf, type El } from "./model.ts";
 
 /**
  * 注目している間、薄くしない要素の id。注目していなければ null（id のセクションが無いときも）。
- * 薄くしないのは、注目したセクションとその中身、固定した要素、固定したセクションの中身、それらを指すコメント（on）。
+ * 薄くしないのは、注目したセクションとその中身、固定した要素、固定したセクションの中身、まとめの帯、それらを指すコメント（on）。
  * WHY 固定を薄くしない: 会議中ずっと見たいまとめの帯（決定事項、ToDo、未決）は、固定したセクションに置く。議題が移るたびに薄くなると読めない。
  * 固定に「薄くしない」の意味を兼ねさせるのは仮の決めで、pomesaka に確かめている途中。条件を変えるときは、ここだけを直す。
  */
@@ -18,6 +18,8 @@ export function keptOnFocus(els: readonly El[], focusId: string | null): Set<str
   };
   keepWithMembers(section);
   for (const el of els) {
+    // まとめの帯は、固定していなくても薄くしない（会議中ずっと見たい所のため）
+    if (el.type === "summary") kept.add(el.id);
     if (el.locked !== true) continue;
     if (el.type === "container") keepWithMembers(el);
     else kept.add(el.id);
