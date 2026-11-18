@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { checkBoard, type CheckContext } from "../src/shared/check.ts";
+import { LEVEL, checkBoard as checkAll, type CheckContext, type IssueKind, type IssueLevel } from "../src/shared/check.ts";
+import { checkBoard } from "./check-style.ts";
 import { applyOps, emptyDoc } from "../src/shared/model.ts";
 
 const add = (el: Record<string, unknown>) => ({ op: "add", el });
@@ -501,5 +502,66 @@ describe("列で並べるセクションの中の、別のセクション", () =
     ["列で並べるセクションの外にあるセクションは、知らせない", [...outer({ cols: 2 }), inner(600)], []],
   ])("%s", (_name, ops, expected) => {
     expect(check(ops)).toEqual(expected);
+  });
+});
+
+describe("検査の種類（崩れと書き方の提案）", () => {
+  // 種類の出し分けは、テスト用の呼び出し（check-style.ts）でなく、checkBoard をそのまま呼んで確かめる
+  const run = (ops: unknown[], ctx: CheckContext = {}): string[] => {
+    const r = applyOps(emptyDoc("t"), ops);
+    if (!r.ok) throw new Error(r.error);
+    return checkAll(r.value.doc, ctx).map((i) => `${i.level}:${i.kind}`);
+  };
+  const shape = (id: string, x: number, extra: Record<string, unknown> = {}) => add({ id, type: "shape", x, y: 0, w: 220, h: 110, ...extra });
+  // 会議のボードの書き方に沿っていない、ふつうに書いた付箋（期限を本文に、1 行めを太字の見出しに、宿題を tag に）。重なりは無い
+  const plain = [shape("a", 0, { text: "見積もりを 11/20 までに出す" }), shape("b", 300, { text: "**見積もり**\n来週まで" }), shape("c", 600, { tag: "宿題", text: "資料を送る" })];
+  // 重なった付箋（崩れ）と、書き方の提案が一緒にあるボード
+  const mixed = [shape("a", 0, { text: "**見積もり**\n来週まで" }), shape("b", 100, { text: "重なる" })];
+
+  test.each<[string, unknown[], CheckContext, string[]]>([
+    ["ふつうに書いたボードは、崩れが無ければ何も返さない", plain, {}, []],
+    [
+      "--style を付けると、書き方の提案が出る",
+      plain,
+      { style: true },
+      ["style:handwritten-field", "style:handwritten-field", "style:handwritten-field"],
+    ],
+    ["崩れだけを返す", mixed, {}, ["break:overlap"]],
+    ["--style を付けると、崩れと書き方の提案の両方を返す", mixed, { style: true }, ["break:overlap", "style:handwritten-field"]],
+    ["期限切れ（overdue）も、書き方の提案", [shape("a", 0, { text: "x", due: "2026-11-01" })], { today: "2026-11-18" }, []],
+    ["期限切れは、--style で出る", [shape("a", 0, { text: "x", due: "2026-11-01" })], { today: "2026-11-18", style: true }, ["style:overdue"]],
+    ["まとめの帯の条件に当たる付箋が無いのは、崩れ", [add({ id: "s", type: "summary", show: { tag: "リスク" }, x: 0, y: 0 })], {}, ["break:empty-summary"]],
+  ])("%s", (_name, ops, ctx, expected) => {
+    expect(run(ops, ctx).sort()).toEqual([...expected].sort());
+  });
+
+  test.each<[IssueKind, IssueLevel]>([
+    ["overlap", "break"],
+    ["outside-section", "break"],
+    ["on-section-edge", "break"],
+    ["cramped", "break"],
+    ["arrow-through", "break"],
+    ["label-overlap", "break"],
+    ["small-text", "break"],
+    ["text-overflow", "break"],
+    ["gantt-text", "break"],
+    ["meta-overflow", "break"],
+    ["highlight-contrast", "break"],
+    ["dead-link", "break"],
+    ["bare-url", "break"],
+    ["narrow-column", "break"],
+    ["nested-section", "break"],
+    ["summary-in-section", "break"],
+    ["empty-summary", "break"],
+    ["handwritten-field", "style"],
+    ["long-title", "style"],
+    ["open-question", "style"],
+    ["overdue", "style"],
+    ["duplicate-text", "style"],
+    ["repeated-value", "style"],
+    ["manual-summary", "style"],
+    ["duplicate-summary", "style"],
+  ])("規則の種類: %s は %s", (kind, level) => {
+    expect(LEVEL[kind]).toBe(level);
   });
 });

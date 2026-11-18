@@ -520,6 +520,20 @@
   font-weight: 700;
   color: var(--board-text-faint);
 }
+/* 状態で集めない帯（発言者や tag で集める帯）の、題名の札の色と、行ごとの状態の札 */
+.summary .stitle.st-any {
+  --st: var(--board-text-muted);
+}
+.summary .sst {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  line-height: 1.5;
+  background: var(--st);
+  color: var(--board-on-dark);
+  font-size: var(--board-text-tag);
+  font-weight: 700;
+}
 .summary .scarried,
 .summary .sdue,
 .summary .swho {

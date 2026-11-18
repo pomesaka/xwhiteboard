@@ -8,7 +8,7 @@ import { BOARD_EXT, DEFAULT_PORT, startServer } from "./server/server.ts";
 import { loadToken } from "./server/token.ts";
 import { FORMAT_MAX_COLS } from "./shared/format.ts";
 import { boxOf, isRecord, parseEl, serialize } from "./shared/model.ts";
-import { itemsOf, summarize } from "./shared/summary.ts";
+import { collect, itemsOf } from "./shared/summary.ts";
 
 const USAGE = `xwb: ローカルで動くホワイトボード
 
@@ -24,7 +24,7 @@ const USAGE = `xwb: ローカルで動くホワイトボード
   xwb claim <board> <json>                      書き込み中の範囲を枠で示す（{x,y,w,h,label,ttl}）
   xwb unclaim <board> [id]                      枠を消す
   xwb focus <board> [セクションの id]            話している議題のセクションを残して、ほかを薄くする（id 無しでやめる）
-  xwb check <board>                             見た目の問題（重なり、はみ出し、矢印の突き抜けなど）の一覧
+  xwb check <board> [--style]                   崩れ（重なり、はみ出し、矢印の突き抜けなど）の一覧（--style で、書き方の提案も）
   xwb template <board> [json|-]                 型（matrix・versus・tree）を、中身のデータから描く
   xwb format <board> [--dry-run]                中身より背の高いセクションを縮め、今の列を保って、列の位置と縦の間を揃える（--dry-run で、動かさずに、動く要素だけを返す）
   xwb format <board> --rebuild [--cols 2] [--dry-run]
@@ -49,7 +49,7 @@ class CliError extends Error {}
 function parseArgs(argv: string[]): { pos: string[]; flags: Map<string, string> } {
   const pos: string[] = [];
   const flags = new Map<string, string>();
-  const bool = new Set(["--no-open", "--force", "--help", "--comments", "--reopen", "--clear", "--dry-run", "--rebuild"]);
+  const bool = new Set(["--no-open", "--force", "--help", "--comments", "--reopen", "--clear", "--dry-run", "--rebuild", "--style"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
     if (a === "-o") flags.set("--out", argv[++i] ?? "");
@@ -158,13 +158,13 @@ async function main(): Promise<void> {
         const el = parseEl(raw);
         return el.ok ? [el.value] : [];
       });
-      const summary = summarize(parsed);
+      const rows = collect(parsed);
       const sized = new Map(parsed.map((el) => [el.id, el]));
       const elements = raws.map((raw: unknown) => {
         const el = isRecord(raw) && typeof raw.id === "string" ? sized.get(raw.id) : undefined;
         const box = el ? boxOf(el) : null;
         if (!isRecord(raw) || !el || !box) return raw;
-        if (el.type === "summary") return { ...raw, w: box.w, h: box.h, items: itemsOf(summary, el).map((i) => i.id) };
+        if (el.type === "summary") return { ...raw, w: box.w, h: box.h, items: itemsOf(rows, el).map((r) => r.item.id) };
         return el.type === "text" || el.type === "table" ? { ...raw, w: box.w, h: box.h } : raw;
       });
       print({ title: j.title, elements });
@@ -201,7 +201,7 @@ async function main(): Promise<void> {
       return;
     }
     case "check": {
-      const res = await request(`/api/check?board=${encodeURIComponent(boardArg(pos[0]))}`, {});
+      const res = await request(`/api/check?board=${encodeURIComponent(boardArg(pos[0]))}${flags.has("--style") ? "&style=1" : ""}`, {});
       print(isRecord(res) ? res.issues : res);
       return;
     }

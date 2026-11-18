@@ -7,7 +7,7 @@ import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, 
 import type { EndMark, ShapeKind } from "../shared/model.ts";
 import { restoreOp, withGeometry } from "../shared/restore.ts";
 import { focusLabel, keptOnFocus } from "../shared/focus.ts";
-import { itemsOf, summarize, type Summary } from "../shared/summary.ts";
+import { collect, filterOf, filterTitle, itemsOf, type Row } from "../shared/summary.ts";
 
 const SVG_NS ="http://www.w3.org/2000/svg";
 const params = new URLSearchParams(location.search);
@@ -522,8 +522,8 @@ function renderEl(el: El): void {
 
 // ---- まとめの帯 ----
 
-/** 付箋の状態ごとの一覧。帯を描くたびに集め直さないように、要素が変わったとき（syncSummaries）に作り直す */
-let summary: Summary = summarize([]);
+/** 帯が集める元の行。帯を描くたびに集め直さないように、要素が変わったとき（syncSummaries）に作り直す */
+let summaryRows: Row[] = [];
 
 /**
  * まとめの帯の行を、今の付箋に合わせて描き直す。
@@ -532,22 +532,25 @@ let summary: Summary = summarize([]);
 function syncSummaries(): void {
   const all = [...els.values()];
   if (!all.some((e) => e.type === "summary")) return;
-  summary = summarize(all);
+  summaryRows = collect(all);
   for (const el of all) if (el.type === "summary") renderEl(el);
 }
 
 /** 帯の中身。題名と、集めた付箋の行。行は、押すと元の付箋へ移る（行の中身は、元の付箋で直す） */
 function renderSummary(el: El, n: HTMLElement): void {
-  const items = itemsOf(summary, el);
+  const rows = itemsOf(summaryRows, el);
+  const filter = filterOf(el);
+  // 状態で集める帯は、題名の札をその状態の色にする。状態で集めない帯は、行ごとに状態の札を出す（帯の題名が状態を表さないため）
   const head = div("shead");
-  head.append(div(`stitle st-${el.show ?? "open"}`, el.title?.trim() || (el.show ? STATUS_LABEL[el.show] : "")), div("scount", `${items.length} 件`));
+  head.append(div(`stitle st-${filter?.status ?? "any"}`, el.title?.trim() || (filter ? filterTitle(filter) : "")), div("scount", `${rows.length} 件`));
   n.append(head);
-  if (items.length === 0) n.append(div("srow none", "無し"));
+  if (rows.length === 0) n.append(div("srow none", "無し"));
   const today = localDay(new Date());
-  for (const item of items) {
+  for (const { item, status } of rows) {
     const row = div("srow");
     row.dataset.target = item.id;
     row.title = item.label;
+    if (filter && filter.status === undefined && status !== undefined) row.append(div(`sst st-${status}`, STATUS_LABEL[status]));
     row.append(div("slabel", item.label));
     if (item.section?.title !== undefined) row.append(div("ssection", item.section.title));
     const source = els.get(item.id);

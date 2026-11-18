@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkBoard } from "../src/shared/check.ts";
+import { checkBoard } from "./check-style.ts";
 import { applyOps, emptyDoc, membersOf, trackHuman, type Applied, type Doc, type El } from "../src/shared/model.ts";
 import { restoreOp, withGeometry } from "../src/shared/restore.ts";
 import { add, drag, resize, rm, send, setOps, undone, type Gesture, type Op } from "./screen.ts";

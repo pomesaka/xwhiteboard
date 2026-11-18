@@ -5,6 +5,7 @@ import { expect, test } from "bun:test";
 import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf } from "../src/shared/model.ts";
 import { agentOp, bandOverlaps, board, gesture, overlaps, rng, violations } from "./random.ts";
 import { send, undone, type Op } from "./screen.ts";
+import { filterOf } from "../src/shared/summary.ts";
 
 const SEEDS = Number(process.env.XWB_FUZZ_SEEDS ?? 150);
 /** 回数を増やしたときに、時間切れにならないようにする */
@@ -142,7 +143,10 @@ test("付箋の状態を変えて、まとめの帯が伸び縮みしても、�
       const note = notes[Math.floor(r() * notes.length)];
       if (!band || !note) break;
       // 帯が集める状態を付けるか、外す。付箋の場所と大きさは変えない
-      const op: Op = { op: "set", id: note.id, patch: r() < 0.6 ? { status: band.show, carriedFrom: null } : { status: null, carriedFrom: null } };
+      // 帯の条件に当てはまる値を付箋に書くか、状態を外す
+      const filter = filterOf(band);
+      const fit = { status: filter?.status ?? "decided", carriedFrom: null, ...(filter?.who === undefined ? {} : { who: filter.who }), ...(filter?.tag === undefined ? {} : { tag: filter.tag }) };
+      const op: Op = { op: "set", id: note.id, patch: r() < 0.6 ? fit : { status: null, carriedFrom: null } };
       const res = applyOps(doc, [op]);
       if (!res.ok) continue;
       tried++;

@@ -3,7 +3,7 @@
 import { GANTT_STATUS, GANTT_UNITS, ganttLayout, parseDay, type GanttBar, type GanttMark, type GanttSegment, type GanttUnit } from "./gantt.ts";
 import { isBoardRef, plainText } from "./rich.ts";
 import { formatOp } from "./format.ts";
-import { itemsOf, summarize } from "./summary.ts";
+import { collect, itemsOf, rowsFor } from "./summary.ts";
 import { expandTemplate } from "./template.ts";
 import { SIDES, type Side } from "./route.ts";
 
@@ -20,6 +20,38 @@ export const NOTE_STATUS = ["decided", "open", "todo", "carried", "priority"] as
 export type NoteStatus = (typeof NOTE_STATUS)[number];
 /** 持ち越しの日付（carriedFrom）と一緒に書ける状態。決定と優先は、持ち越しにならない */
 export const CARRIABLE: readonly NoteStatus[] = ["carried", "todo", "open"];
+/** まとめの帯の条件。書いた項目の全部に当てはまる付箋を集める。who と tag は、前後の空白を除いて、付箋の値と完全に一致するもの */
+export interface SummaryFilter {
+  status?: NoteStatus;
+  who?: string;
+  tag?: string;
+}
+const FILTER_KEYS = ["status", "who", "tag"] as const;
+
+/**
+ * まとめの帯の show を読む。状態の名前（"decided"）は { status: "decided" } と同じ。
+ * 項目が 1 つも無い、知らない項目、空の文字列は、理由を付けて断る
+ */
+export function parseShow(v: unknown): Res<SummaryFilter> {
+  if (isOneOf(NOTE_STATUS, v)) return ok({ status: v });
+  if (!isRecord(v)) return fail(`show は、状態の名前（${NOTE_STATUS.join(" | ")}）か、{ status・who・tag } の組`);
+  const keys = Object.keys(v);
+  const unknown = keys.find((k) => !FILTER_KEYS.some((f) => f === k));
+  if (unknown !== undefined) return fail(`show に ${unknown} は書けない。書けるのは status・who・tag`);
+  if (keys.length === 0) return fail("show の組に、status・who・tag のどれも書いていない。1 つ以上書く");
+  const out: SummaryFilter = {};
+  if (v.status !== undefined) {
+    if (!isOneOf(NOTE_STATUS, v.status)) return fail(`show の status は ${NOTE_STATUS.join(" | ")} のどれか`);
+    out.status = v.status;
+  }
+  for (const k of ["who", "tag"] as const) {
+    if (v[k] === undefined) continue;
+    const s = v[k];
+    if (typeof s !== "string" || s.trim() === "") return fail(`show の ${k} は、空でない文字列`);
+    out[k] = s;
+  }
+  return ok(out);
+}
 export const STATUS_LABEL: Record<NoteStatus, string> = { decided: "決定", open: "未決", todo: "宿題", carried: "持ち越し", priority: "優先" };
 /** 矢印の端の形。矢じり、丸、無し */
 export const END_MARKS = ["arrow", "dot", "none"] as const;
@@ -113,8 +145,8 @@ export interface El {
   status?: NoteStatus;
   /** 持ち越しの元の会議の日付。札に「持ち越し 11/11」と出す。本文に日付を書かないので、同じ日付の繰り返しの検査にかからない */
   carriedFrom?: string;
-  /** まとめの帯（summary）が集める、付箋の状態 */
-  show?: NoteStatus;
+  /** まとめの帯（summary）が集める条件。状態の名前（前の形）か、状態・発言者・tag の組（全部に当てはまる付箋を集める） */
+  show?: NoteStatus | SummaryFilter;
   /** 付箋と図形の、宿題の期限。YYYY-MM-DD か YYYY-MM。札の段に「〆11/20」と出す */
   due?: string;
   /** セクションの中身を、この列の数で詰めて並べる。書くと、中身の位置と幅、セクションの高さを xwb が決める */
@@ -288,10 +320,13 @@ export function parseEl(raw: unknown): Res<El> {
         if (!isOneOf(NOTE_STATUS, v)) return fail(`status は ${NOTE_STATUS.join(" | ")} のどれか`);
         el.status = v;
         break;
-      case "show":
-        if (!isOneOf(NOTE_STATUS, v)) return fail(`show は ${NOTE_STATUS.join(" | ")} のどれか 1 つ`);
-        el.show = v;
+      case "show": {
+        const r = parseShow(v);
+        if (!r.ok) return r;
+        // 状態の名前で書かれた show は、そのまま残す（前の形のファイルと、書いた形を変えない）
+        el.show = isOneOf(NOTE_STATUS, v) ? v : r.value;
         break;
+      }
       case "carriedFrom":
         if (typeof v !== "string" || parseDay(v, false) === null) return fail("carriedFrom は YYYY-MM-DD か YYYY-MM の日付");
         el.carriedFrom = v;
@@ -1056,7 +1091,7 @@ function arrangeCols(els: readonly El[], kept: ReadonlyMap<string, readonly stri
  */
 function settleSummaries(els: readonly El[]): { els: El[]; changed: string[] } {
   if (!els.some((e) => e.type === "summary")) return { els: [...els], changed: [] };
-  const rows = summarize(els);
+  const rows = collect(els);
   const work = [...els];
   const index = new Map(work.map((e, i) => [e.id, i]));
   const changed = new Set<string>();
@@ -1348,7 +1383,8 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
           // まとめの帯の高さは、集めた行の数から決まる。書かれた h は使わず、今の行の数からの高さにする。
           // WHY: 書かれた h を変わる前の高さと読むと、まとまりの最後に、下にあるものを、行の数と関係ない量だけ動かす。
           // 足す時点で高さを入れるのは、場所を書かない add と above が、本当の大きさで場所を決めるため
-          raw.h = isOneOf(NOTE_STATUS, raw.show) ? summaryHeight(summarize(doc.elements)[raw.show].length) : summaryHeight(0);
+          const show = parseShow(raw.show);
+          raw.h = summaryHeight(show.ok ? rowsFor(collect(doc.elements), show.value).length : 0);
           if (op.in !== undefined) return fail(`${at}: まとめの帯（summary）は、in でセクションに足せない。セクションの外に置く（x・y を書くか、何も書かずに全体の右へ置く）`);
         }
         let grown: El | null = null;
@@ -1623,7 +1659,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         }
         // まとめの帯の高さを、戻した付箋の状態からの行の数に合わせる。下は動かさない（戻す操作が、動いた要素の場所を書いている）。
         // WHY ここで合わせる: まとまりの最後の並べ直しに任せると、高さの変わったぶん、戻した場所から、下をもう一度動かす
-        const rows = summarize(doc.elements);
+        const rows = collect(doc.elements);
         /** 帯の id ごとの、高さを合わせる前の高さ。伸びた帯だけ */
         const grown = new Map<string, number>();
         for (const band of doc.elements.filter((e) => e.type === "summary")) {

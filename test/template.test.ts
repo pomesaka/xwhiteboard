@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkBoard } from "../src/shared/check.ts";
+import { checkBoard } from "./check-style.ts";
 import { applyOps, boxOf, emptyDoc, type Doc, type El } from "../src/shared/model.ts";
 
 const cell = (title: string, items: unknown[] = []) => ({ title, items });

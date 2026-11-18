@@ -4,6 +4,7 @@ import { sectionTop, CARRIABLE, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FON
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
+import { collect, filterKey, filterOf, filterTitle, rowsFor } from "./summary.ts";
 import { bareUrls, isBoardRef, parseRich, plainText, type MarkColor } from "./rich.ts";
 import { LABEL_FONT, LABEL_LIFT, arrowPath, labelSpot } from "./route.ts";
 
@@ -54,10 +55,58 @@ export type IssueKind =
   | "duplicate-summary"
   /** 固定したセクションの中に、同じ状態の付箋が並んでいる（手で写したまとめ） */
   | "manual-summary"
+  /** 発言者か tag で集めるまとめの帯に、当たる付箋が 1 枚も無い */
+  | "empty-summary"
   /** まとめの帯が、セクションの中にある */
   | "summary-in-section";
 
-export interface Issue {
+/**
+ * 検査の種類。break は崩れ（見た目が壊れている、押しても動かない、書いた意図どおりに描けていない）。いつも出す。
+ * style は書き方の提案（会議のボードの書き方の決まりに沿っていない。崩れてはいない）。CheckContext の style を付けたときだけ出す。
+ * WHY 分ける: 書き方の決まりまでいつも出すと、ふつうのホワイトボードとして自然に書いた文が「直すもの」と出て、エージェントが人の書いた文を書き換えにいく
+ */
+export type IssueLevel = "break" | "style";
+
+/**
+ * 規則ごとの種類。規則を足すときは、ここで必ずどちらかを決める（Record なので、決めないと型検査が落ちる）。
+ * 判断の基準は「直さないと、見た目か動きが壊れたままか」。壊れたままなら break、そうでなければ style
+ */
+export const LEVEL: Record<IssueKind, IssueLevel> = {
+  overlap: "break",
+  "outside-section": "break",
+  "on-section-edge": "break",
+  cramped: "break",
+  "arrow-through": "break",
+  "label-overlap": "break",
+  "small-text": "break",
+  "text-overflow": "break",
+  "gantt-text": "break",
+  "meta-overflow": "break",
+  "highlight-contrast": "break",
+  "dead-link": "break",
+  "bare-url": "break",
+  "narrow-column": "break",
+  "nested-section": "break",
+  "summary-in-section": "break",
+  // 書いた条件が、意図した付箋を集めていない
+  "empty-summary": "break",
+  "handwritten-field": "style",
+  "long-title": "style",
+  "open-question": "style",
+  overdue: "style",
+  "duplicate-text": "style",
+  "repeated-value": "style",
+  "manual-summary": "style",
+  "duplicate-summary": "style",
+};
+
+/** 検査の結果の 1 件 */
+export interface Issue extends Found {
+  level: IssueLevel;
+}
+
+/** 規則が見つけたもの。種類（level）は、checkBoard が LEVEL から付ける */
+interface Found {
   kind: IssueKind;
   /** 関わる要素の id。1 つめが、直す側の要素 */
   ids: string[];
@@ -113,6 +162,8 @@ export interface CheckContext {
   boardExists?: (ref: string) => boolean;
   /** 今日の日付（YYYY-MM-DD）。期限切れ（overdue）を見るのに使う */
   today?: string;
+  /** 書き方の提案（level: style）も返すか。渡さなければ、崩れだけ */
+  style?: boolean;
 }
 
 /**
@@ -303,8 +354,8 @@ function valuesOf(text: string): Set<string> {
   return new Set(plain.match(VALUE) ?? []);
 }
 
-function checkRepeats(doc: Doc): Issue[] {
-  const issues: Issue[] = [];
+function checkRepeats(doc: Doc): Found[] {
+  const issues: Found[] = [];
   const texts = doc.elements.flatMap((el) => ((el.type === "shape" || el.type === "text") && el.text ? [{ id: el.id, text: el.text, features: featuresOf(el.text) }] : []));
 
   // 似た文。重なりの割合は、短いほうの文の特徴のうち、相手にもあるものの割合
@@ -344,14 +395,51 @@ function checkRepeats(doc: Doc): Issue[] {
   return issues;
 }
 
+/**
+ * 付箋と図形の who か tag のうち、want と、大文字と小文字、全角と半角、空白だけが違う値（前後の空白を除いて同じ値は除く）。
+ * WHY 見分けをこの範囲にとどめる: 似た語（「リスク」と「リスク管理」）まで拾うと、別の分類を綴りの違いと言うことになる
+ */
+function similarValues(els: readonly El[], key: "who" | "tag", want: string): string[] {
+  const fold = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  const out = new Set<string>();
+  for (const el of els) {
+    const v = el.type === "shape" ? el[key] : undefined;
+    if (v !== undefined && v.trim() !== want.trim() && fold(v) === fold(want)) out.add(v);
+  }
+  return [...out];
+}
+
 /** まとめの帯の使い方の検査 */
-function summaryIssues(doc: Doc): Issue[] {
-  const issues: Issue[] = [];
-  // 同じ状態を集める帯が 2 つ以上
-  const byShow = new Map<string, string[]>();
-  for (const el of doc.elements) if (el.type === "summary" && el.show !== undefined) byShow.set(el.show, [...(byShow.get(el.show) ?? []), el.id]);
-  for (const [show, ids] of byShow) {
-    if (ids.length >= 2) issues.push({ kind: "duplicate-summary", ids, message: `show が ${show} のまとめの帯が ${ids.length} つある（${ids.join("・")}）。同じ一覧が並ぶので、1 つを残して消す` });
+function summaryIssues(doc: Doc): Found[] {
+  const issues: Found[] = [];
+  // 同じ条件で集める帯が 2 つ以上。状態の名前で書いた show と、{ status } だけの組は、同じ条件
+  const byShow = new Map<string, { title: string; ids: string[] }>();
+  for (const el of doc.elements) {
+    const filter = filterOf(el);
+    if (!filter) continue;
+    const key = filterKey(filter);
+    byShow.set(key, { title: filterTitle(filter), ids: [...(byShow.get(key)?.ids ?? []), el.id] });
+  }
+  for (const { title, ids } of byShow.values()) {
+    if (ids.length >= 2) issues.push({ kind: "duplicate-summary", ids, message: `条件が「${title}」のまとめの帯が ${ids.length} つある（${ids.join("・")}）。同じ一覧が並ぶので、1 つを残して消す` });
+  }
+  // 発言者か tag で集める帯に、当たる付箋が 1 枚も無い。綴りの違いに、帯を置いた時点で気づけるように、似た値を案内に入れる。
+  // WHY 状態だけで集める帯は見ない: 会議の始めは、決定も宿題も 0 件が普通
+  const rows = collect(doc.elements);
+  for (const el of doc.elements) {
+    const filter = filterOf(el);
+    if (!filter || (filter.who === undefined && filter.tag === undefined) || rowsFor(rows, filter).length > 0) continue;
+    const hints = (["who", "tag"] as const).flatMap((k) => {
+      const want = filter[k];
+      if (want === undefined) return [];
+      const near = similarValues(doc.elements, k, want);
+      return near.length > 0 ? [`似た ${k}: ${near.map((v) => `「${v}」`).join("・")}`] : [];
+    });
+    issues.push({
+      kind: "empty-summary",
+      ids: [el.id],
+      message: `まとめの帯 ${el.id} の条件（${filterTitle(filter)}）に当たる付箋が 1 枚も無い。${hints.length > 0 ? `${hints.join("。")}。付箋の値を条件にそろえるか、帯の show を直す` : "付箋の who か tag を、条件と同じ文字で書く"}`,
+    });
   }
   for (const c of doc.elements) {
     if (c.type !== "container") continue;
@@ -378,8 +466,18 @@ function summaryIssues(doc: Doc): Issue[] {
   return issues;
 }
 
+/**
+ * ボードの検査。崩れ（level: break）を返す。ctx.style を付けると、書き方の提案（level: style）も一緒に返す
+ */
 export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
-  const issues: Issue[] = [];
+  return findIssues(doc, ctx).flatMap((found) => {
+    const level = LEVEL[found.kind];
+    return level === "break" || ctx.style === true ? [{ ...found, level }] : [];
+  });
+}
+
+function findIssues(doc: Doc, ctx: CheckContext): Found[] {
+  const issues: Found[] = [];
   issues.push(...summaryIssues(doc));
   // リンクの形で書いていない URL。画面ではただの文字で出て、押せない
   for (const el of doc.elements) {

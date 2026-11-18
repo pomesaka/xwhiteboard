@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
 import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, localDay, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
 import { checkBoard } from "../shared/check.ts";
-import { summarize } from "../shared/summary.ts";
+import { bandsOf, summarize } from "../shared/summary.ts";
 import { resolveBoardRef } from "../shared/rich.ts";
 import { shoot } from "./shot.ts";
 import { loadToken, sameToken } from "./token.ts";
@@ -324,10 +324,15 @@ export async function startServer(port: number): Promise<void> {
         return json({ sessions: targets.length });
       }
       case "GET /api/summary":
-        return json(summarize(getBoard(boardPath(q.get("board"))).doc.elements));
+      {
+        // 状態ごとの一覧（前からの形。議事録のセッションが使っている）に、ボードにある帯ごとの一覧（bands）を足して返す
+        const els = getBoard(boardPath(q.get("board"))).doc.elements;
+        return json({ ...summarize(els), bands: bandsOf(els) });
+      }
       case "GET /api/check": {
         const board = getBoard(boardPath(q.get("board")));
-        return json({ issues: checkBoard(board.doc, { boardExists: (ref) => existsSync(resolveBoardRef(board.path, ref)), today: localDay(new Date()) }) });
+        // style=1 で、書き方の提案も返す（xwb check --style）
+        return json({ issues: checkBoard(board.doc, { boardExists: (ref) => existsSync(resolveBoardRef(board.path, ref)), today: localDay(new Date()), style: q.get("style") === "1" }) });
       }
       case "GET /api/changes":
         // 人がブラウザで変えて、まだ読み終えたことにしていない要素。読むだけでは消さない（議事録を書き直すときに読み直せるように）

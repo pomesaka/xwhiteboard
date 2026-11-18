@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { checkBoard, type IssueKind } from "../src/shared/check.ts";
+import { type IssueKind } from "../src/shared/check.ts";
+import { checkBoard } from "./check-style.ts";
 import { keptOnFocus } from "../src/shared/focus.ts";
 import { SUMMARY_HEAD_H, SUMMARY_MIN_W, SUMMARY_PAD_BOTTOM, SUMMARY_ROW_H, SUMMARY_W, applyOps, boxOf, emptyDoc, parseDoc, parseEl, serialize, summaryHeight, type Doc, type El } from "../src/shared/model.ts";
-import { itemsOf, summarize } from "../src/shared/summary.ts";
+import { collect, itemsOf, summarize } from "../src/shared/summary.ts";
 
 const add = (el: Record<string, unknown>) => ({ op: "add", el });
 const band = (extra: Record<string, unknown> = {}) => ({ id: "sum", type: "summary", show: "decided", x: 0, y: 0, ...extra });
@@ -19,7 +20,7 @@ const ids = (doc: Doc, show: "decided" | "open" | "todo" | "carried" | "priority
 describe("まとめの帯（summary）の形", () => {
   test.each([
     ["show が無い", { id: "sum", type: "summary", x: 0, y: 0 }, "summary には show が要る"],
-    ["知らない状態", band({ show: "done" }), "show は decided | open | todo | carried | priority のどれか 1 つ"],
+    ["知らない状態", band({ show: "done" }), "show は、状態の名前（decided | open | todo | carried | priority）か、{ status・who・tag } の組"],
     ["状態を 2 つ書いた", band({ show: ["decided", "open"] }), "show は"],
     ["text を書いた", band({ text: "x" }), "summary に text は無い"],
     ["cols を書いた", band({ cols: 2 }), "summary に cols は無い"],
@@ -223,8 +224,8 @@ describe("帯が集める付箋", () => {
 
   test("帯の要素が集める行は、その帯の show の状態", () => {
     const doc = build([add(band({ show: "todo" })), add(note("a", { status: "decided" })), add(note("b", { x: 300, status: "todo" }))]);
-    const all = summarize(doc.elements);
-    expect(doc.elements.map((el) => itemsOf(all, el).map((i) => i.id))).toEqual([["b"], [], []]);
+    const all = collect(doc.elements);
+    expect(doc.elements.map((el) => itemsOf(all, el).map((r) => r.item.id))).toEqual([["b"], [], []]);
   });
 });
 
