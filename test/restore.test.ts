@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkBoard } from "./check-style.ts";
-import { applyOps, emptyDoc, membersOf, trackHuman, type Applied, type Doc, type El } from "../src/shared/model.ts";
+import { applyOps, emptyDoc, membersOf, summaryHeight, trackHuman, type Applied, type Doc, type El } from "../src/shared/model.ts";
 import { restoreOp, withGeometry } from "../src/shared/restore.ts";
 import { add, drag, resize, rm, send, setOps, undone, type Gesture, type Op } from "./screen.ts";
 
@@ -113,15 +113,17 @@ describe("画面の操作 → 元に戻す で、まとめの帯のあるボー�
 
 // 人の操作と「元に戻す」の間に、エージェントが帯の行を変える（会議でよく起きる形）
 describe("人の操作と「元に戻す」の間に、エージェントが帯の行を変える", () => {
-  // 帯 sd（決定、2 行で h120）の下に、間 48 で列のセクション T（付箋 2 枚）。T の横の列に T2。確かめた担当と同じ形
+  // 帯 sd（決定、2 行）の下に、間 48 で列のセクション T（付箋 2 枚）。T の横の列に T2。確かめた担当と同じ形。
+  // 数字は、帯の高さの式（summaryHeight）から求める。h(n) は n 行の帯の高さ
+  const h = summaryHeight;
   const meeting = apply(emptyDoc("t"), [
     { op: "add", el: { id: "d1", type: "shape", x: 3000, y: -600, w: 220, h: 110, text: "決定 1", status: "decided" } },
     { op: "add", el: { id: "d2", type: "shape", x: 3300, y: -600, w: 220, h: 110, text: "決定 2", status: "decided" } },
     { op: "add", el: { id: "sd", type: "summary", show: "decided", x: 0, y: 0 } },
-    { op: "add", el: { id: "T", type: "container", x: 0, y: 168, w: 740, cols: 3 } },
+    { op: "add", el: { id: "T", type: "container", x: 0, y: h(2) + 48, w: 740, cols: 3 } },
     { op: "add", in: "T", el: { id: "a", type: "shape", text: "a" } },
     { op: "add", in: "T", el: { id: "b", type: "shape", text: "b" } },
-    { op: "add", el: { id: "T2", type: "container", x: 800, y: 168, w: 740, cols: 3 } },
+    { op: "add", el: { id: "T2", type: "container", x: 800, y: h(2) + 48, w: 740, cols: 3 } },
     { op: "add", in: "T2", el: { id: "c", type: "shape", text: "c" } },
   ]).doc;
   const y = (doc: Doc, id: string): number | undefined => find(doc, id)?.y;
@@ -129,18 +131,18 @@ describe("人の操作と「元に戻す」の間に、エージェントが帯�
   const addRow = (id: string) => ({ op: "add", el: { id, type: "shape", x: 3600 + Number(id.slice(1)) * 240, y: -600, w: 220, h: 110, text: "足した決定", status: "decided" } });
 
   test("9: 人が帯をドラッグしている間に、エージェントが行を 1 つ増やす。「戻す」で、下のセクションを 2 回押し下げない", () => {
-    expect([find(meeting, "sd")?.h, y(meeting, "T")]).toEqual([120, 168]);
-    // ドラッグを始めた時点の帯（h120）を origin にして、帯を右へ動かす。サーバーに届く前に、エージェントが行を足す（帯 h148、T は 196 へ）
+    expect([find(meeting, "sd")?.h, y(meeting, "T")]).toEqual([h(2), h(2) + 48]);
+    // ドラッグを始めた時点の帯（2 行）を origin にして、帯を右へ動かす。サーバーに届く前に、エージェントが行を足す（帯は 3 行、T は 1 行ぶん下がる）
     const g = drag(meeting, ["sd"], 2000, 0);
     const later = agent(meeting, [addRow("d3")]);
-    expect([find(later, "sd")?.h, y(later, "T")]).toEqual([148, 196]);
+    expect([find(later, "sd")?.h, y(later, "T")]).toEqual([h(3), h(3) + 48]);
     const sent = send(later, g);
     if (!sent) throw new Error("操作が断られた");
     const back = undone(sent.applied.doc, sent.undo);
-    expect([find(back, "sd")?.x, find(back, "sd")?.h, y(back, "T"), y(back, "T2")]).toEqual([0, 148, 196, 196]);
-    // 足した付箋を消して行を 2 に戻すと、T は始めの 168 に戻る
+    expect([find(back, "sd")?.x, find(back, "sd")?.h, y(back, "T"), y(back, "T2")]).toEqual([0, h(3), h(3) + 48, h(3) + 48]);
+    // 足した付箋を消して行を 2 に戻すと、T は始めの場所に戻る
     const after = agent(back, [{ op: "rm", id: "d3" }]);
-    expect([find(after, "sd")?.h, y(after, "T")]).toEqual([120, 168]);
+    expect([find(after, "sd")?.h, y(after, "T")]).toEqual([h(2), h(2) + 48]);
   });
 
   test("10: 人が帯を空いた場所へ動かし、その間にエージェントが行を 3 つ増やす。「戻す」と、伸びた帯の下のセクションを押し下げる", () => {
@@ -148,14 +150,14 @@ describe("人の操作と「元に戻す」の間に、エージェントが帯�
     if (!sent) throw new Error("操作が断られた");
     // 帯が離れている間に行が増える。帯の真下に何も無いので、下は動かない
     const later = agent(sent.applied.doc, [addRow("d3"), addRow("d4"), addRow("d5")]);
-    expect([find(later, "sd")?.h, y(later, "T")]).toEqual([204, 168]);
+    expect([find(later, "sd")?.h, y(later, "T")]).toEqual([h(5), h(2) + 48]);
     const back = undone(later, sent.undo);
-    // 帯は元の場所に戻り、下のセクションは、帯の下の端（204）から 60 空けた 264 へ下がる。横の列 T2 も、そろって下がる
-    expect([find(back, "sd")?.x, find(back, "sd")?.y, y(back, "T"), y(back, "T2")]).toEqual([0, 0, 264, 264]);
+    // 帯は元の場所に戻り、下のセクションは、帯の下の端から 60 空けた所へ下がる。横の列 T2 も、そろって下がる
+    expect([find(back, "sd")?.x, find(back, "sd")?.y, y(back, "T"), y(back, "T2")]).toEqual([0, 0, h(5) + 60, h(5) + 60]);
     expect(checkBoard(back)).toEqual([]);
     // 足した付箋を消して行を 2 に戻すと、下は、行が減ったぶん上がる（帯との間は 60 のまま）
     const after = agent(back, [{ op: "rm", id: "d3" }, { op: "rm", id: "d4" }, { op: "rm", id: "d5" }]);
-    expect([find(after, "sd")?.h, y(after, "T")]).toEqual([120, 180]);
+    expect([find(after, "sd")?.h, y(after, "T")]).toEqual([h(2), h(2) + 60]);
   });
 
   test("10: 帯の横に並ぶ要素（右の端に接する帯、帯の横の付箋）は、戻した帯の押し下げで動かない", () => {
@@ -168,7 +170,7 @@ describe("人の操作と「元に戻す」の間に、エージェントが帯�
     if (!sent) throw new Error("操作が断られた");
     const later = agent(sent.applied.doc, [addRow("d3"), addRow("d4"), addRow("d5")]);
     const back = undone(later, sent.undo);
-    expect([find(back, "so")?.y, y(back, "side"), y(back, "T")]).toEqual([0, 50, 264]);
+    expect([find(back, "so")?.y, y(back, "side"), y(back, "T")]).toEqual([0, 50, h(5) + 60]);
   });
 
   test("10: 帯が離れている間に、帯の場所へ上をそろえて要素が置かれても、「戻す」で押し下げる。帯の右の端に接して並ぶ帯は動かない", () => {
@@ -178,21 +180,21 @@ describe("人の操作と「元に戻す」の間に、エージェントが帯�
     // エージェントが、帯の空けた場所に、帯と同じ高さ（0）で付箋 N を置く
     const later = agent(sent.applied.doc, [{ op: "add", el: { id: "N", type: "shape", x: 100, y: 0, w: 220, h: 110, text: "後から" } }]);
     const back = undone(later, sent.undo);
-    // N は、帯（h120）の下 60 の 180 へ。その下の T（168）も、同じ量（180）だけ下がる。so は同じ段なので動かない
-    expect([find(back, "so")?.y, y(back, "N"), y(back, "T")]).toEqual([0, 180, 348]);
+    // N は、帯（2 行）の下 60 へ。その下の T も、同じ量だけ下がる。so は同じ段なので動かない
+    expect([find(back, "so")?.y, y(back, "N"), y(back, "T")]).toEqual([0, h(2) + 60, h(2) + 48 + h(2) + 60]);
   });
 
   test("帯を消している間に行が増えて、「戻す」で足し直すと、伸びたぶんの範囲に始まる要素だけを押し下げ、前から帯に重ねて置かれていた要素は動かさない", () => {
-    // X は、前から帯に重なって置かれている（y 40）。帯を消し、その間に行が 1 つ増え、Y が、増える前の帯の下の端のすぐ下（130）に置かれる
+    // X は、前から帯に重なって置かれている（y 40）。帯を消し、その間に行が 1 つ増え、Y が、増える前の帯の下の端のすぐ下（10 下）に置かれる
     const base = apply(meeting, [{ op: "add", el: { id: "X", type: "shape", x: 300, y: 40, w: 100, h: 40, text: "前から" } }]).doc;
     const sent = send(base, rm(base, ["sd"]));
     if (!sent) throw new Error("操作が断られた");
-    const later = agent(sent.applied.doc, [addRow("d3"), { op: "add", el: { id: "Y", type: "shape", x: 100, y: 130, w: 100, h: 30, text: "後から" } }]);
+    const later = agent(sent.applied.doc, [addRow("d3"), { op: "add", el: { id: "Y", type: "shape", x: 100, y: h(2) + 10, w: 100, h: 30, text: "後から" } }]);
     const res = applyOps(later, sent.undo, { by: "human", at: "" });
     if (!res.ok) throw new Error(res.error);
     const back = res.value.doc;
-    // 帯は消した時の高さ 120 で戻り、行の数の 148 に伸びる。Y は伸びたぶんの範囲（120〜148）から始まるので、帯の下 60 へ押し下げる
-    expect([find(back, "sd")?.h, y(back, "X"), y(back, "Y")]).toEqual([148, 40, 208]);
+    // 帯は消した時の高さ（2 行）で戻り、行の数（3 行）に伸びる。Y は伸びたぶんの範囲から始まるので、帯の下 60 へ押し下げる
+    expect([find(back, "sd")?.h, y(back, "X"), y(back, "Y")]).toEqual([h(3), 40, h(3) + 60]);
   });
 
   test("「戻す」で帯の高さが変わったら、帯は返事の updated に入る", () => {
@@ -204,19 +206,19 @@ describe("人の操作と「元に戻す」の間に、エージェントが帯�
 
   test("10: set で帯を、下の要素に重なる場所へ動かしても、押し下げない（場所を書いた人の置き方のまま。検査が知らせる）", () => {
     const moved = agent(meeting, [{ op: "set", id: "sd", patch: { x: 0, y: 100 } }]);
-    expect([y(moved, "T"), checkBoard(moved).map((i) => i.kind)]).toEqual([168, ["on-section-edge"]]);
+    expect([y(moved, "T"), checkBoard(moved).map((i) => i.kind)]).toEqual([h(2) + 48, ["on-section-edge"]]);
   });
 
   test("13: 人がセクションをドラッグしている間に、帯の行が増えてセクションが下がる。ドラッグを始めた後に届いた位置を origin にすれば、「戻す」と行を戻すで、始めの場所に戻る", () => {
     // 画面は、ドラッグの最中に届いた更新で、手元の位置を保ちながら、origin（「戻す」が書く場所）を届いた位置に替える（main.ts の upsert）
     const later = agent(meeting, [addRow("d3")]);
-    expect(y(later, "T")).toBe(196);
+    expect(y(later, "T")).toBe(h(3) + 48);
     const g = drag(later, ["T"], 0, 400);
     const sent = send(later, g);
     if (!sent) throw new Error("操作が断られた");
     const back = undone(sent.applied.doc, sent.undo);
-    expect(y(back, "T")).toBe(196);
-    expect(y(agent(back, [{ op: "rm", id: "d3" }]), "T")).toBe(168);
+    expect(y(back, "T")).toBe(h(3) + 48);
+    expect(y(agent(back, [{ op: "rm", id: "d3" }]), "T")).toBe(h(2) + 48);
   });
 });
 

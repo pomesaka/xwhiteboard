@@ -227,8 +227,8 @@ const REQUIRED: Record<ElType, readonly string[]> = {
  * まとめの帯の大きさ。題名の帯の高さ、1 行の高さ、下の余白、既定の幅、幅の下限。
  * 画面の CSS（board.css の .summary）と同じ値。片方だけ変えると、置く場所と見た目がずれる
  */
-export const SUMMARY_HEAD_H = 52;
-export const SUMMARY_ROW_H = 28;
+export const SUMMARY_HEAD_H = 58;
+export const SUMMARY_ROW_H = 38;
 export const SUMMARY_PAD_BOTTOM = 12;
 export const SUMMARY_W = 480;
 export const SUMMARY_MIN_W = 240;

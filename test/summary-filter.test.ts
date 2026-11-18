@@ -173,22 +173,24 @@ describe("条件の帯の検査", () => {
 });
 
 describe("条件の帯の高さと、下の動き", () => {
-  const sec = { op: "add", el: { id: "s", type: "container", x: 0, y: 152, w: 740, h: 300 } };
+  // 帯（1 行）の下 60 にセクション。数字は帯の高さの式から求める
+  const h = summaryHeight;
+  const sec = { op: "add", el: { id: "s", type: "container", x: 0, y: h(1) + 60, w: 740, h: 300 } };
   test("行が増えると伸びて下が下がり、減ると縮んで上がる（状態の帯と同じ決まり）", () => {
     let doc = build([add(band({ who: "設楽" })), sec]);
-    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([92, 152]);
+    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([h(1), h(1) + 60]);
     const step = (ops: unknown[]): Doc => {
       const r = applyOps(doc, ops);
       if (!r.ok) throw new Error(r.error);
       return r.value.doc;
     };
     doc = step([add(note("x1", 0, { status: "todo", who: "設楽" })), add(note("x2", 1, { status: "decided", who: "設楽" })), add(note("x3", 2, { status: "open", who: "設楽" }))]);
-    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([summaryHeight(3), 208]);
+    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([h(3), h(3) + 60]);
     // 発言者を変えると、帯から外れる
     doc = step([{ op: "set", id: "x1", patch: { who: "高坂" } }, { op: "set", id: "x2", patch: { tag: "別" } }]);
-    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([summaryHeight(2), 180]);
+    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([h(2), h(2) + 60]);
     doc = step([{ op: "rm", id: "x2" }, { op: "rm", id: "x3" }]);
-    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([92, 152]);
+    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([h(1), h(1) + 60]);
   });
 
   test("足す時点で、条件に当たる行の数の高さにする", () => {
@@ -201,14 +203,14 @@ describe("条件の帯の高さと、下の動き", () => {
     const r = applyOps(doc, [add(note("n", 0, { tag: "リスク" }))]);
     if (!r.ok) throw new Error(r.error);
     doc = r.value.doc;
-    expect([get(doc, "sum")?.h, get(doc, "op")?.h, get(doc, "s")?.y]).toEqual([92, 92, 152]);
+    expect([get(doc, "sum")?.h, get(doc, "op")?.h, get(doc, "s")?.y]).toEqual([h(1), h(1), h(1) + 60]);
     const r2 = applyOps(doc, [add(note("n2", 1, { tag: "リスク" }))]);
     if (!r2.ok) throw new Error(r2.error);
-    expect([get(r2.value.doc, "sum")?.h, get(r2.value.doc, "op")?.h, get(r2.value.doc, "s")?.y]).toEqual([120, 92, 180]);
+    expect([get(r2.value.doc, "sum")?.h, get(r2.value.doc, "op")?.h, get(r2.value.doc, "s")?.y]).toEqual([h(2), h(1), h(2) + 60]);
   });
 
   test("set で条件を変えると、行の数に合わせて伸び、下が下がる", () => {
     const doc = build([...notes, add(band({ tag: "懸念" })), sec, { op: "set", id: "sum", patch: { show: { status: "todo" } } }]);
-    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([summaryHeight(4), 236]);
+    expect([get(doc, "sum")?.h, get(doc, "s")?.y]).toEqual([h(4), h(4) + 60]);
   });
 });

@@ -109,4 +109,9 @@
   --board-text-gantt-micro: 10px;
   --board-text-pin: 13px;
   --board-text-pin-small: 11px;
+  /* まとめの帯。会議の後に最初に読む所なので、行の見出しは付箋の本文と同じ大きさ。題名の札はそれより大きく、行の添え書き（セクション、持ち越し、期限、担当）は札の段より大きく */
+  --board-text-summary-title: 17px;
+  --board-text-summary-row: 15px;
+  --board-text-summary-meta: 12px;
+  --board-text-summary-count: 13px;
 }

@@ -57,15 +57,16 @@ describe("まとめの帯（summary）の形", () => {
     expect([first.elements[0]?.h, r.value.doc.elements[0]?.h]).toEqual([summaryHeight(rows), summaryHeight(rows)]);
   });
 
+  // 付箋を先に足して、帯を 3 行で置き、その下に 60 空けてセクションを置く
+  const s3 = summaryHeight(3) + 60;
   test.each<[string, number | null, number, number]>([
     // 前の版は h を書かなかった。帯の下は、今の行の数の高さに合わせて空けてある。最初の操作で高さを書くだけで、下は動かさない
-    ["h の無い帯（前の版で書いた帯）は、高さを書くだけで、下は動かさない", null, 148, 208],
+    ["h の無い帯（前の版で書いた帯）は、高さを書くだけで、下は動かさない", null, summaryHeight(3), s3],
     // h があって合わない（手で直した、など）なら、次の操作で直して、変わったぶん下を動かす
-    ["h が行の数と合わない帯は、次の操作で直して、下を動かす", 92, 148, 264],
+    ["h が行の数と合わない帯は、次の操作で直して、下を動かす", summaryHeight(1), summaryHeight(3), s3 + summaryHeight(3) - summaryHeight(1)],
   ])("12: %s", (_name, written, h, sy) => {
-    // 付箋を先に足して、帯を 3 行（h148）で置き、その下に 60 空けてセクションを置く
-    const doc = build([...[0, 1, 2].map((i) => add(note(`d${i}`, { x: 3000 + i * 240, y: -600, status: "decided" }))), add(band()), add(section("s", 0, 208))]);
-    const text = serialize(doc).replace('"h":148', written === null ? "" : `"h":${written}`).replace('"w":480,}', '"w":480}').replace(',,', ',');
+    const doc = build([...[0, 1, 2].map((i) => add(note(`d${i}`, { x: 3000 + i * 240, y: -600, status: "decided" }))), add(band()), add(section("s", 0, s3))]);
+    const text = serialize(doc).replace(`"h":${summaryHeight(3)}`, written === null ? "" : `"h":${written}`).replace('"w":480,}', '"w":480}').replace(',,', ',');
     const read = parseDoc(text);
     if (!read.ok) throw new Error(read.error);
     expect(read.value.elements.find((e) => e.id === "sum")?.h).toBe(written ?? undefined);
@@ -74,12 +75,12 @@ describe("まとめの帯（summary）の形", () => {
   });
 
   test("ファイルの h が合っていなくても、読むだけでは直さず、次の操作で直す", () => {
-    const text = serialize(build([add(band()), add(note("a", { status: "decided" })), add(note("b", { x: 300, status: "decided" }))])).replace('"h":120', '"h":999');
+    const text = serialize(build([add(band()), add(note("a", { status: "decided" })), add(note("b", { x: 300, status: "decided" }))])).replace(`"h":${summaryHeight(2)}`, '"h":999');
     const read = parseDoc(text);
     if (!read.ok) throw new Error(read.error);
     expect(read.value.elements[0]?.h).toBe(999);
     const next = applyOps(read.value, [{ op: "title", title: "x" }]);
-    expect(next.ok && next.value.doc.elements[0]?.h).toBe(120);
+    expect(next.ok && next.value.doc.elements[0]?.h).toBe(summaryHeight(2));
   });
 
   test.each<[string, Record<string, unknown>, string | null]>([
@@ -231,29 +232,29 @@ describe("帯が集める付箋", () => {
 
 describe("帯の高さ", () => {
   // 画面の CSS（board.css の .summary の .shead の height、.srow の height）と同じ値。変えるときは、CSS も変える
-  test("題名の帯 52、1 行 28、下の余白 12。既定の幅 480", () => {
-    expect([SUMMARY_HEAD_H, SUMMARY_ROW_H, SUMMARY_PAD_BOTTOM, SUMMARY_W]).toEqual([52, 28, 12, 480]);
+  test("題名の帯 58、1 行 38、下の余白 12。既定の幅 480", () => {
+    expect([SUMMARY_HEAD_H, SUMMARY_ROW_H, SUMMARY_PAD_BOTTOM, SUMMARY_W]).toEqual([58, 38, 12, 480]);
   });
 
   test.each([
-    ["0 行は、「無し」の 1 行ぶん", 0, 92],
-    ["1 行", 1, 92],
-    ["2 行", 2, 120],
-    ["30 行", 30, 904],
+    ["0 行は、「無し」の 1 行ぶん", 0, 108],
+    ["1 行", 1, 108],
+    ["2 行", 2, 146],
+    ["30 行", 30, 1210],
   ])("%s", (_name, rows, expected) => {
     expect(summaryHeight(rows)).toBe(expected);
   });
 
   const notes = (n: number, extra: Record<string, unknown> = {}) => Array.from({ length: n }, (_, i) => add(note(`n${i}`, { x: i * 240, status: "decided", ...extra })));
   test.each<[string, unknown[], number]>([
-    ["集める付箋が無い", [add(band())], 92],
-    ["1 枚", [add(band()), ...notes(1)], 92],
-    ["3 枚", [add(band()), ...notes(3)], 148],
-    ["別の状態の付箋は数えない", [add(band()), ...notes(3, { status: "open" })], 92],
-    ["幅に入りきらない長い見出しでも、折り返さないので変わらない", [add(band({ w: 240 })), ...notes(2, { title: "とても長い見出し".repeat(10) })], 120],
-    ["幅を変えても変わらない", [add(band({ w: 900 })), ...notes(2)], 120],
-    ["show を変えると、集め直す", [add(band()), ...notes(3), { op: "set", id: "sum", patch: { show: "open" } }], 92],
-    ["付箋を消すと減る", [add(band()), ...notes(3), { op: "rm", id: "n0" }], 120],
+    ["集める付箋が無い", [add(band())], summaryHeight(0)],
+    ["1 枚", [add(band()), ...notes(1)], summaryHeight(1)],
+    ["3 枚", [add(band()), ...notes(3)], summaryHeight(3)],
+    ["別の状態の付箋は数えない", [add(band()), ...notes(3, { status: "open" })], summaryHeight(0)],
+    ["幅に入りきらない長い見出しでも、折り返さないので変わらない", [add(band({ w: 240 })), ...notes(2, { title: "とても長い見出し".repeat(10) })], summaryHeight(2)],
+    ["幅を変えても変わらない", [add(band({ w: 900 })), ...notes(2)], summaryHeight(2)],
+    ["show を変えると、集め直す", [add(band()), ...notes(3), { op: "set", id: "sum", patch: { show: "open" } }], summaryHeight(0)],
+    ["付箋を消すと減る", [add(band()), ...notes(3), { op: "rm", id: "n0" }], summaryHeight(2)],
   ])("まとまりの最後に、行の数からの高さが h に書かれる: %s", (_name, ops, expected) => {
     const sum = build(ops).elements.find((e) => e.id === "sum");
     expect([sum?.h, sum ? boxOf(sum)?.h : null]).toEqual([expected, expected]);
@@ -262,15 +263,18 @@ describe("帯の高さ", () => {
   test("ファイルに書いて読み直しても、高さが残る", () => {
     const doc = build([add(band()), ...notes(3)]);
     const r = parseDoc(serialize(doc));
-    expect(r.ok && r.value.elements[0]?.h).toBe(148);
+    expect(r.ok && r.value.elements[0]?.h).toBe(summaryHeight(3));
   });
 
   test("高さをまだ書いていない帯（前の版のファイル）は、1 行ぶんの大きさ", () => {
-    expect(boxOf({ id: "x", type: "summary", show: "decided", x: 0, y: 0 })).toEqual({ x: 0, y: 0, w: 480, h: 92 });
+    expect(boxOf({ id: "x", type: "summary", show: "decided", x: 0, y: 0 })).toEqual({ x: 0, y: 0, w: 480, h: summaryHeight(1) });
   });
 });
 
 describe("帯の高さが変わると、下にあるものが動く", () => {
+  // 数字は、帯の高さの式（summaryHeight）から求める。h(n) は n 行の帯の高さ。帯の下に 60 空けて置いたものは、h(1) + 60 から始まる
+  const h = summaryHeight;
+  const below = h(1) + 60;
   // 会議のボードの形。帯 3 つを横に並べ、その下に、議題のセクションを 2 列で置く。状態つきの付箋は、帯にもセクションにも関わらない、上の離れた所に置く
   const A = add(band({ id: "A", show: "decided", x: 0, y: 0 }));
   const B = add(band({ id: "B", show: "open", x: 540, y: 0 }));
@@ -287,43 +291,46 @@ describe("帯の高さが変わると、下にあるものが動く", () => {
   };
 
   test("帯が 1 つ。行が増えると下のセクションと中身が下がり、減ると上がり、元の行の数で元の場所に戻る", () => {
-    // 帯（1 行で 92）の下に、間を 60 空けてセクション。中に、状態の無い付箋 m
-    let doc = build([A, sec("s", 0, 152), add(note("m", { x: 24, y: 210 })), ...rowsOf("decided", 1)]);
-    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([92, { s: 152, m: 210 }]);
+    // 帯（1 行）の下に、間を 60 空けてセクション。中に、状態の無い付箋 m（セクションの上の端から 58）
+    let doc = build([A, sec("s", 0, below), add(note("m", { x: 24, y: below + 58 })), ...rowsOf("decided", 1)]);
+    const at3 = (n: number) => ({ s: h(n) + 60, m: h(n) + 118 });
+    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([h(1), at3(1)]);
     doc = step(doc, rowsOf("decided", 2, 1));
-    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([148, { s: 208, m: 266 }]);
+    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([h(3), at3(3)]);
     doc = step(doc, [{ op: "rm", id: "decided2" }]);
-    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([120, { s: 180, m: 238 }]);
+    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([h(2), at3(2)]);
     doc = step(doc, [{ op: "set", id: "decided1", patch: { status: null } }]);
-    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([92, { s: 152, m: 210 }]);
+    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([h(1), at3(1)]);
     // 0 行は「無し」の 1 行で、1 行と同じ高さ。下は動かない
     doc = step(doc, [{ op: "rm", id: "decided0" }]);
-    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([92, { s: 152, m: 210 }]);
+    expect([hOf(doc, "A"), at(doc, "s", "m")]).toEqual([h(1), at3(1)]);
   });
 
   test("帯の下に空けた間（60 でなくてもよい）は、行が増減しても保たれる", () => {
-    let doc = build([A, sec("s", 0, 292), ...rowsOf("decided", 1)]);
+    let doc = build([A, sec("s", 0, h(1) + 200), ...rowsOf("decided", 1)]);
     doc = step(doc, rowsOf("decided", 3, 1));
-    expect([hOf(doc, "A"), at(doc, "s")]).toEqual([176, { s: 376 }]);
+    expect([hOf(doc, "A"), at(doc, "s")]).toEqual([h(4), { s: h(4) + 200 }]);
     doc = step(doc, [{ op: "rm", id: "decided1" }, { op: "rm", id: "decided2" }, { op: "rm", id: "decided3" }]);
-    expect(at(doc, "s")).toEqual({ s: 292 });
+    expect(at(doc, "s")).toEqual({ s: h(1) + 200 });
   });
 
-  // 帯が 1 行（92）のうちに、下に 60 空けてセクションを置き（152 と 512）、その後に付箋を足す。
-  // 帯 A は 3 行（148）、B は 1 行（92）、C は 0 行（92）になり、セクションは、いちばん背の高い A の下に 60 空けた 208 と 568 へ下がる
-  const meeting = (): Doc => build([A, B, C, sec("s1", 0, 152), sec("s2", 800, 152), sec("s3", 0, 512), sec("s4", 800, 512), ...rowsOf("decided", 3), ...rowsOf("open", 1)]);
+  // 帯が 1 行のうちに、下に 60 空けてセクションを 2 段置き（下の段は 360 下）、その後に付箋を足す。
+  // 帯 A は 3 行、B は 1 行、C は 0 行になり、セクションは、いちばん背の高い A の下に 60 空けた所へ下がる
+  const meeting = (): Doc => build([A, B, C, sec("s1", 0, below), sec("s2", 800, below), sec("s3", 0, below + 360), sec("s4", 800, below + 360), ...rowsOf("decided", 3), ...rowsOf("open", 1)]);
+  /** いちばん背の高い帯が n 行のときの、下の段の場所 */
+  const rowsAt = (n: number) => ({ s1: h(n) + 60, s2: h(n) + 60, s3: h(n) + 420, s4: h(n) + 420 });
   test.each<[string, unknown[], Record<string, number>, Record<string, number>]>([
-    ["背の低い帯が伸びても、いちばん高い帯を超えなければ、下は動かない", rowsOf("open", 2, 1), { A: 148, B: 148, C: 92 }, { s1: 208, s2: 208, s3: 568, s4: 568 }],
-    ["背の低い帯が、いちばん高い帯を超えたら、超えたぶんだけ、下の段が全部下がる", rowsOf("open", 4, 1), { A: 148, B: 204, C: 92 }, { s1: 264, s2: 264, s3: 624, s4: 624 }],
-    ["いちばん高い帯が縮むと、次に高い帯の下の端まで、下の段が全部上がる", [{ op: "rm", id: "decided0" }, { op: "rm", id: "decided1" }, { op: "rm", id: "decided2" }], { A: 92, B: 92, C: 92 }, { s1: 152, s2: 152, s3: 512, s4: 512 }],
-    ["いちばん高い帯が 1 行だけ縮む", [{ op: "rm", id: "decided0" }], { A: 120, B: 92, C: 92 }, { s1: 180, s2: 180, s3: 540, s4: 540 }],
+    ["背の低い帯が伸びても、いちばん高い帯を超えなければ、下は動かない", rowsOf("open", 2, 1), { A: h(3), B: h(3), C: h(1) }, rowsAt(3)],
+    ["背の低い帯が、いちばん高い帯を超えたら、超えたぶんだけ、下の段が全部下がる", rowsOf("open", 4, 1), { A: h(3), B: h(5), C: h(1) }, rowsAt(5)],
+    ["いちばん高い帯が縮むと、次に高い帯の下の端まで、下の段が全部上がる", [{ op: "rm", id: "decided0" }, { op: "rm", id: "decided1" }, { op: "rm", id: "decided2" }], { A: h(1), B: h(1), C: h(1) }, rowsAt(1)],
+    ["いちばん高い帯が 1 行だけ縮む", [{ op: "rm", id: "decided0" }], { A: h(2), B: h(1), C: h(1) }, rowsAt(2)],
     [
       "1 つの操作で、片方の帯が縮み、もう片方が伸びる（決定の付箋を未決に変える）。下は、いちばん下の端の変わったぶんだけ、1 回動く",
       [{ op: "set", id: "decided0", patch: { status: "open" } }],
-      { A: 120, B: 120, C: 92 },
-      { s1: 180, s2: 180, s3: 540, s4: 540 },
+      { A: h(2), B: h(2), C: h(1) },
+      rowsAt(2),
     ],
-    ["どの帯の行も変わらない操作では、何も動かない", [add(note("free", { x: 3000, y: -900 }))], { A: 148, B: 92, C: 92 }, { s1: 208, s2: 208, s3: 568, s4: 568 }],
+    ["どの帯の行も変わらない操作では、何も動かない", [add(note("free", { x: 3000, y: -900 }))], { A: h(3), B: h(1), C: h(1) }, rowsAt(3)],
   ])("帯が 3 つ並ぶ: %s", (_name, ops, heights, ys) => {
     const doc = step(meeting(), ops);
     expect([Object.fromEntries(["A", "B", "C"].map((id) => [id, hOf(doc, id)])), at(doc, "s1", "s2", "s3", "s4")]).toEqual([heights, ys]);
@@ -333,54 +340,54 @@ describe("帯の高さが変わると、下にあるものが動く", () => {
     const start = meeting();
     let doc = step(start, rowsOf("open", 5, 1));
     doc = step(doc, rowsOf("todo", 7));
-    expect(at(doc, "s1", "s3")).toEqual({ s1: 320, s3: 680 });
+    expect(at(doc, "s1", "s3")).toEqual({ s1: rowsAt(7).s1, s3: rowsAt(7).s3 });
     doc = step(doc, [1, 2, 3, 4, 5].map((i) => ({ op: "rm", id: `open${i}` })));
     doc = step(doc, [0, 1, 2, 3, 4, 5, 6].map((i) => ({ op: "rm", id: `todo${i}` })));
     expect(doc.elements).toEqual(start.elements);
   });
 
   test.each<[string, unknown[], unknown[], Record<string, number>]>([
-    ["同じ段に並ぶ要素（横にあって、帯の下の端より上から始まる）は動かない", [A, add(note("side", { x: 900, y: 40 })), sec("s", 0, 152)], rowsOf("decided", 3), { side: 40, s: 208 }],
-    // side（帯でない要素）は、下の端（150）が帯より深くても、基準に入らない。帯の伸びたぶん、下は下がる
-    ["帯の横に、帯より下まである帯でない要素があっても、帯が伸びたぶん下がる", [A, add(note("side", { x: 500, y: 40 })), sec("s", 0, 152)], rowsOf("decided", 3), { side: 40, s: 208 }],
-    ["同じ形で 4 行", [A, add(note("side", { x: 500, y: 40 })), sec("s", 0, 152)], rowsOf("decided", 4), { side: 40, s: 236 }],
-    // 確かめで見つかった形（11）。帯の横の、関係の無い列（R1: y 0〜120、R2: y 140〜）が、基準に入らない
-    ["帯の横の関係の無い列の要素は、基準に入らない", [A, add(note("R1", { x: 2000, y: 0, h: 120 })), add(note("R2", { x: 2000, y: 140 })), sec("T", 0, 140)], rowsOf("decided", 3), { R1: 0, R2: 196, T: 196 }],
-    ["帯の横に背の高いセクションがあっても、帯が伸びたぶん下がる", [A, sec("tallSec", 900, 0, { h: 600 }), sec("T", 0, 152)], rowsOf("decided", 3), { tallSec: 0, T: 208 }],
-    ["帯より上の要素は動かない", [add(band({ id: "A", x: 0, y: 400 })), add(note("up", { x: 0, y: 0 })), sec("s", 0, 552)], rowsOf("decided", 3), { up: 0, s: 608 }],
-    ["横が重ならない列の下の要素も、同じ高さから下なら、そろって動く", [A, sec("s", 0, 152), add(note("far", { x: 900, y: 152 }))], rowsOf("decided", 3), { s: 208, far: 208 }],
+    ["同じ段に並ぶ要素（横にあって、帯の下の端より上から始まる）は動かない", [A, add(note("side", { x: 900, y: 40 })), sec("s", 0, below)], rowsOf("decided", 3), { side: 40, s: h(3) + 60 }],
+    // side（帯でない要素）は、下の端が帯より深くても、基準に入らない。帯の伸びたぶん、下は下がる
+    ["帯の横に、帯より下まである帯でない要素があっても、帯が伸びたぶん下がる", [A, add(note("side", { x: 500, y: 40 })), sec("s", 0, below)], rowsOf("decided", 3), { side: 40, s: h(3) + 60 }],
+    ["同じ形で 4 行", [A, add(note("side", { x: 500, y: 40 })), sec("s", 0, below)], rowsOf("decided", 4), { side: 40, s: h(4) + 60 }],
+    // 確かめで見つかった形（11）。帯の横の、関係の無い列（R1: 帯より背が高い、R2: 帯の下 48 から）が、基準に入らない
+    ["帯の横の関係の無い列の要素は、基準に入らない", [A, add(note("R1", { x: 2000, y: 0, h: h(1) + 28 })), add(note("R2", { x: 2000, y: h(1) + 48 })), sec("T", 0, h(1) + 48)], rowsOf("decided", 3), { R1: 0, R2: h(3) + 48, T: h(3) + 48 }],
+    ["帯の横に背の高いセクションがあっても、帯が伸びたぶん下がる", [A, sec("tallSec", 900, 0, { h: 600 }), sec("T", 0, below)], rowsOf("decided", 3), { tallSec: 0, T: h(3) + 60 }],
+    ["帯より上の要素は動かない", [add(band({ id: "A", x: 0, y: 400 })), add(note("up", { x: 0, y: 0 })), sec("s", 0, 400 + below)], rowsOf("decided", 3), { up: 0, s: 400 + h(3) + 60 }],
+    ["横が重ならない列の下の要素も、同じ高さから下なら、そろって動く", [A, sec("s", 0, below), add(note("far", { x: 900, y: below }))], rowsOf("decided", 3), { s: h(3) + 60, far: h(3) + 60 }],
     ["下に何も無ければ、高さだけが変わる", [A, add(note("side", { x: 600, y: 0 }))], rowsOf("decided", 3), { side: 0 }],
-    ["動かした要素を指すコメントは、付いていく", [A, add(note("n", { x: 0, y: 152 })), add({ id: "k", type: "comment", x: 300, y: 160, on: "n" })], rowsOf("decided", 3), { n: 208, k: 216 }],
-    ["固定した要素も動く", [A, add(note("n", { x: 0, y: 152, locked: true }))], rowsOf("decided", 3), { n: 208 }],
-    ["帯を縦に 2 つ積む。上の帯が伸びると、下の帯も下がる", [A, add(band({ id: "B", show: "open", x: 0, y: 152 })), sec("s", 0, 304)], rowsOf("decided", 3), { B: 208, s: 360 }],
+    ["動かした要素を指すコメントは、付いていく", [A, add(note("n", { x: 0, y: below })), add({ id: "k", type: "comment", x: 300, y: below + 8, on: "n" })], rowsOf("decided", 3), { n: h(3) + 60, k: h(3) + 68 }],
+    ["固定した要素も動く", [A, add(note("n", { x: 0, y: below, locked: true }))], rowsOf("decided", 3), { n: h(3) + 60 }],
+    ["帯を縦に 2 つ積む。上の帯が伸びると、下の帯も下がる", [A, add(band({ id: "B", show: "open", x: 0, y: below })), sec("s", 0, below + h(1) + 60)], rowsOf("decided", 3), { B: h(3) + 60, s: h(3) + 60 + h(1) + 60 }],
     [
       "背の低い帯のすぐ下（間 10）に置いた付箋は、伸びた帯に重ならないように、同じ間で下がる",
-      // s は A の真下だけ（n と重ならない幅）。A が伸びて s が 208 へ下がった後、B が伸びる
-      [A, B, add(note("n", { x: 540, y: 102 })), sec("s", 0, 152, { w: 480 }), ...rowsOf("decided", 3)],
+      // s は A の真下だけ（n と重ならない幅）。A が伸びて s が下がった後、B が伸びる
+      [A, B, add(note("n", { x: 540, y: h(1) + 10 })), sec("s", 0, below, { w: 480 }), ...rowsOf("decided", 3)],
       rowsOf("open", 2),
-      { n: 130, s: 236 },
+      { n: h(2) + 10, s: h(3) + 60 + h(2) - h(1) },
     ],
   ])("%s", (_name, base, ops, ys) => {
     const doc = step(build(base), ops);
     expect(at(doc, ...Object.keys(ys))).toEqual(ys);
   });
 
-  // 境界。帯 A（x 0〜480、1 行で下の端 92）が 3 行（148）に伸びる
+  // 境界。帯 A（x 0〜480、1 行）が 3 行に伸びる
   test.each<[string, unknown[], Record<string, number>]>([
-    ["帯の下の端にぴったり接して始まる要素（間 0）も下がる", [A, add(note("n", { x: 0, y: 92 }))], { n: 148 }],
-    ["右の端が帯の左の端にぴったり接する要素は、横が重ならないので、真下でなく横の列として扱う（同じ高さから下なので、そろって下がる）", [add(band({ id: "A", x: 300, y: 0 })), add(note("n", { x: 80, y: 152 })), sec("s", 300, 152)], { n: 208, s: 208 }],
-    ["右の端が帯の左の端にぴったり接するだけで、帯の真下に何も無ければ、動かない", [add(band({ id: "A", x: 300, y: 0 })), add(note("n", { x: 80, y: 152 }))], { n: 152 }],
-    ["左の端が帯の右の端にぴったり接する要素は、横が重ならないので、帯の真下に何も無ければ動かない", [A, add(note("n", { x: 480, y: 152 }))], { n: 152 }],
-    ["前から帯に重ねて置かれていた要素（帯の下の端より上から始まる）は動かず、基準にも入らない", [A, add(note("n", { x: 100, y: 40 })), sec("s", 0, 152)], { n: 40, s: 208 }],
+    ["帯の下の端にぴったり接して始まる要素（間 0）も下がる", [A, add(note("n", { x: 0, y: h(1) }))], { n: h(3) }],
+    ["右の端が帯の左の端にぴったり接する要素は、横が重ならないので、真下でなく横の列として扱う（同じ高さから下なので、そろって下がる）", [add(band({ id: "A", x: 300, y: 0 })), add(note("n", { x: 80, y: below })), sec("s", 300, below)], { n: h(3) + 60, s: h(3) + 60 }],
+    ["右の端が帯の左の端にぴったり接するだけで、帯の真下に何も無ければ、動かない", [add(band({ id: "A", x: 300, y: 0 })), add(note("n", { x: 80, y: below }))], { n: below }],
+    ["左の端が帯の右の端にぴったり接する要素は、横が重ならないので、帯の真下に何も無ければ動かない", [A, add(note("n", { x: 480, y: below }))], { n: below }],
+    ["前から帯に重ねて置かれていた要素（帯の下の端より上から始まる）は動かず、基準にも入らない", [A, add(note("n", { x: 100, y: 40 })), sec("s", 0, below)], { n: 40, s: h(3) + 60 }],
     [
       "帯の真下の要素を指すコメントは、帯の横（動かす段より上）にあっても、指す要素と一緒に動く",
-      [A, add(note("n", { x: 0, y: 152 })), add({ id: "k", type: "comment", x: 600, y: 20, on: "n" })],
-      { n: 208, k: 76 },
+      [A, add(note("n", { x: 0, y: below })), add({ id: "k", type: "comment", x: 600, y: 20, on: "n" })],
+      { n: h(3) + 60, k: 20 + h(3) - h(1) },
     ],
     [
       "前から重なって置かれていた背の高い要素は基準に入らず、帯のすぐ下の要素は、帯との間を保って下がる",
-      [A, add(note("tall", { x: 400, y: 0, w: 220, h: 300 })), add(note("n", { x: 0, y: 102, w: 600 }))],
-      { tall: 0, n: 158 },
+      [A, add(note("tall", { x: 400, y: 0, w: 220, h: 300 })), add(note("n", { x: 0, y: h(1) + 10, w: 600 }))],
+      { tall: 0, n: h(3) + 10 },
     ],
   ])("境界: %s", (_name, base, ys) => {
     const doc = step(build([...base, ...rowsOf("decided", 1)]), rowsOf("decided", 2, 1));
@@ -388,41 +395,44 @@ describe("帯の高さが変わると、下にあるものが動く", () => {
   });
 
   test("縮むとき、動かさない帯でない要素（tall）に重なる手前で止まる", () => {
-    // 帯は始めから 3 行（h148）。s1 は帯の下 60、s2 は tall（下の端 470）の下 26。2 行減ると帯は 56 縮むが、s2 は tall に重なる手前の 26 しか上がれない
-    const base = build([...rowsOf("decided", 3), A, sec("s1", 0, 208), add(note("tall", { x: 800, y: 0, h: 470 })), sec("s2", 800, 496)]);
-    expect(at(base, "s1", "s2")).toEqual({ s1: 208, s2: 496 });
+    // 帯は始めから 3 行。s1 は帯の下 60、s2 は tall の下 26。2 行減ると帯は 2 行ぶん縮むが、s2 は tall に重なる手前の 26 しか上がれない
+    const s1 = h(3) + 60;
+    const s2 = s1 + 288;
+    const base = build([...rowsOf("decided", 3), A, sec("s1", 0, s1), add(note("tall", { x: 800, y: 0, h: s2 - 26 })), sec("s2", 800, s2)]);
+    expect(at(base, "s1", "s2")).toEqual({ s1, s2 });
     const doc = step(base, [{ op: "rm", id: "decided0" }, { op: "rm", id: "decided1" }]);
-    expect(at(doc, "s1", "s2", "tall")).toEqual({ s1: 182, s2: 470, tall: 0 });
+    expect(at(doc, "s1", "s2", "tall")).toEqual({ s1: s1 - 26, s2: s2 - 26, tall: 0 });
   });
 
   test("前から帯に重ねて置かれていた下の段は、伸びた帯の下の端まで下がる（ほかの帯が深くても）", () => {
     // B（右、背が高い）は、前から s に重なっている。A が伸びても、いちばん下の端（B の 300）は変わらないが、s は A に重ならない所まで下がる
-    const base = build([A, ...rowsOf("open", 8), add(band({ id: "B", show: "open", x: 540, y: 0 })), sec("s", 0, 152, { w: 1100 })]);
-    expect([hOf(base, "B"), at(base, "s")]).toEqual([288, { s: 152 }]);
-    // A が 4 行（176）に伸びて、s の上の端（152）を超えるので、s は A の下の端まで下がる
+    // B は 5 行。下の端は s より下だが、中心は s の上の端より上（s の中身には数えない）
+    const base = build([A, ...rowsOf("open", 5), add(band({ id: "B", show: "open", x: 540, y: 0 })), sec("s", 0, below, { w: 1100 })]);
+    expect([hOf(base, "B"), at(base, "s")]).toEqual([h(5), { s: below }]);
+    // A が 4 行に伸びて、s の上の端を超えるので、s は A の下の端まで下がる
     const doc = step(base, rowsOf("decided", 4));
-    expect([hOf(doc, "A"), at(doc, "s")]).toEqual([176, { s: 176 }]);
+    expect([hOf(doc, "A"), at(doc, "s")]).toEqual([h(4), { s: h(4) }]);
   });
 
   test("帯だけのボードでも、h の無い帯に高さを書く", () => {
-    const text = serialize(build([add(band())])).replace('"h":92', "").replace(',,', ',').replace(",}", "}");
+    const text = serialize(build([add(band())])).replace(`"h":${h(1)}`, "").replace(',,', ',').replace(",}", "}");
     const read = parseDoc(text);
     if (!read.ok) throw new Error(read.error);
     expect(read.value.elements[0]?.h).toBeUndefined();
     const next = applyOps(read.value, [{ op: "title", title: "x" }]);
-    expect(next.ok && next.value.doc.elements[0]?.h).toBe(92);
+    expect(next.ok && next.value.doc.elements[0]?.h).toBe(h(1));
   });
 
   test("帯の show を set で変えて行の数が変わると、下も動く", () => {
-    const doc = step(build([...rowsOf("decided", 3), A, sec("s", 0, 208)]), [{ op: "set", id: "A", patch: { show: "open" } }]);
-    expect([hOf(doc, "A"), at(doc, "s")]).toEqual([92, { s: 152 }]);
+    const doc = step(build([...rowsOf("decided", 3), A, sec("s", 0, h(3) + 60)]), [{ op: "set", id: "A", patch: { show: "open" } }]);
+    expect([hOf(doc, "A"), at(doc, "s")]).toEqual([h(1), { s: below }]);
   });
 
   test("縮んでも、動かさない要素に重なる所までは上げない（下の段の上に、帯より背の高い要素がある）", () => {
     // tall は、下の段のセクション s2 の真上にある、動かさない付箋（下の端 300）。帯（3 行で 148）が縮んでも、s1・s2 は、tall の下の端との間を保つ
     let doc = build([A, add(note("tall", { x: 800, y: 0, h: 300 })), sec("s1", 0, 360), sec("s2", 800, 360), ...rowsOf("decided", 3)]);
     doc = step(doc, [{ op: "rm", id: "decided0" }, { op: "rm", id: "decided1" }]);
-    expect([hOf(doc, "A"), at(doc, "s1", "s2", "tall")]).toEqual([92, { s1: 360, s2: 360, tall: 0 }]);
+    expect([hOf(doc, "A"), at(doc, "s1", "s2", "tall")]).toEqual([h(1), { s1: 360, s2: 360, tall: 0 }]);
   });
 
   test.each<[string, unknown[], string[]]>([
@@ -432,27 +442,28 @@ describe("帯の高さが変わると、下にあるものが動く", () => {
     ["同じ状態をもう一度書く。帯は updated に入らない", [{ op: "set", id: "decided0", patch: { status: "decided" } }], ["decided0"]],
     ["帯を動かす（x・y の set）。高さは同じで、下は動かない", [{ op: "set", id: "A", patch: { x: 2000, y: 0 } }], ["A"]],
   ])("返事の updated: %s", (_name, ops, expected) => {
-    const doc = build([A, sec("s", 0, 152), add(note("m", { x: 24, y: 210 })), ...rowsOf("decided", 1)]);
+    const doc = build([A, sec("s", 0, below), add(note("m", { x: 24, y: below + 58 })), ...rowsOf("decided", 1)]);
     const r = applyOps(doc, ops);
     expect(r.ok ? r.value.updated.map((e) => e.id) : r.error).toEqual(expected);
   });
 
   test("場所を書かない操作（above）の前に、帯の高さを合わせる", () => {
     // 同じまとまりで、行を増やしてから、帯の下のセクションの上に足す。足す場所は、伸びた帯に押し下げられた後のセクションの場所
-    const doc = step(build([A, sec("s", 0, 152), ...rowsOf("decided", 1)]), [...rowsOf("decided", 2, 1), { op: "add", above: "s", el: { id: "n", type: "shape", text: "上に足す" } }]);
-    expect(at(doc, "n", "s")).toEqual({ n: 208, s: 378 });
+    const doc = step(build([A, sec("s", 0, below), ...rowsOf("decided", 1)]), [...rowsOf("decided", 2, 1), { op: "add", above: "s", el: { id: "n", type: "shape", text: "上に足す" } }]);
+    // n は、伸びた帯に押し下げられた後の s の場所。s は、n の高さ（110）と間 60 のぶん、さらに下がる
+    expect(at(doc, "n", "s")).toEqual({ n: h(3) + 60, s: h(3) + 60 + 170 });
   });
 });
 
 describe("帯を足す", () => {
   test.each<[string, unknown[], Record<string, unknown>]>([
-    ["場所を書かなければ、全体の右に、上をそろえて置く。幅は 480", [add(note("a", { x: 100, y: 50, status: "decided" })), add({ id: "sum", type: "summary", show: "decided" })], { x: 380, y: 50, w: 480, h: 92 }],
-    ["空のボードでは、原点に置く", [add({ id: "sum", type: "summary", show: "decided" })], { x: 0, y: 0, w: 480, h: 92 }],
-    ["場所を書けば、その場所", [add(band({ x: 40, y: 80, w: 300 }))], { x: 40, y: 80, w: 300, h: 92 }],
+    ["場所を書かなければ、全体の右に、上をそろえて置く。幅は 480", [add(note("a", { x: 100, y: 50, status: "decided" })), add({ id: "sum", type: "summary", show: "decided" })], { x: 380, y: 50, w: 480, h: summaryHeight(1) }],
+    ["空のボードでは、原点に置く", [add({ id: "sum", type: "summary", show: "decided" })], { x: 0, y: 0, w: 480, h: summaryHeight(0) }],
+    ["場所を書けば、その場所", [add(band({ x: 40, y: 80, w: 300 }))], { x: 40, y: 80, w: 300, h: summaryHeight(0) }],
     [
       "above で、要素の上に足す。指した要素と、その段より下が下がる",
       [add(note("a", { x: 100, y: 50 })), { op: "add", above: "a", el: { id: "sum", type: "summary", show: "decided" } }],
-      { x: 100, y: 50, w: 480, h: 92 },
+      { x: 100, y: 50, w: 480, h: summaryHeight(0) },
     ],
   ])("%s", (_name, ops, expected) => {
     expect(build(ops).elements.find((e) => e.id === "sum")).toMatchObject(expected);
@@ -460,7 +471,7 @@ describe("帯を足す", () => {
 
   test("above で足した帯のぶん、指した要素が下がる（帯の 1 行ぶんの高さと、間 60）", () => {
     const doc = build([add(note("a", { x: 100, y: 50 })), { op: "add", above: "a", el: { id: "sum", type: "summary", show: "decided" } }]);
-    expect(doc.elements.find((e) => e.id === "a")?.y).toBe(202);
+    expect(doc.elements.find((e) => e.id === "a")?.y).toBe(50 + summaryHeight(0) + 60);
   });
 
   test.each([

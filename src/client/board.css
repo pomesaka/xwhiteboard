@@ -443,7 +443,7 @@
   margin-left: 0;
 }
 
-/* まとめの帯。付箋の状態から集めた一覧。題名の帯（52）、1 行（28）、下の余白（12）は、見積もり（model.ts の SUMMARY_*）と同じ値 */
+/* まとめの帯。付箋の状態から集めた一覧。題名の帯（58）、1 行（38）、下の余白（12）は、見積もり（model.ts の SUMMARY_*）と同じ値 */
 .summary {
   box-sizing: border-box;
   display: flex;
@@ -456,7 +456,7 @@
 }
 .summary .shead {
   flex: none;
-  height: 52px;
+  height: 58px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -465,11 +465,11 @@
 /* 題名は、集める状態の色の札。付箋の状態の札と同じ色で、どの状態の一覧かが分かる */
 .summary .stitle {
   min-width: 0;
-  padding: 3px 12px;
+  padding: 3px 14px;
   border-radius: 999px;
   background: var(--st);
   color: var(--board-on-dark);
-  font-size: var(--board-text-section);
+  font-size: var(--board-text-summary-title);
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -477,19 +477,19 @@
 }
 .summary .scount {
   flex: none;
-  font-size: var(--board-text-label);
+  font-size: var(--board-text-summary-count);
   color: var(--board-text-muted);
 }
 /* 行は折り返さない。入りきらない文字は「…」で切る（高さが行の数だけで決まるように） */
 .summary .srow {
   flex: none;
-  height: 28px;
+  height: 38px;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 14px;
   border-top: 1px solid var(--board-line-soft);
-  font-size: var(--board-text-table);
+  font-size: var(--board-text-summary-row);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -516,7 +516,7 @@
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: var(--board-text-tag);
+  font-size: var(--board-text-summary-meta);
   font-weight: 700;
   color: var(--board-text-faint);
 }
@@ -531,14 +531,14 @@
   line-height: 1.5;
   background: var(--st);
   color: var(--board-on-dark);
-  font-size: var(--board-text-tag);
+  font-size: var(--board-text-summary-meta);
   font-weight: 700;
 }
 .summary .scarried,
 .summary .sdue,
 .summary .swho {
   flex: none;
-  font-size: var(--board-text-tag);
+  font-size: var(--board-text-summary-meta);
   font-weight: 700;
   color: var(--board-text-muted);
 }
