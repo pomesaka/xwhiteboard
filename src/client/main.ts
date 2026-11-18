@@ -397,6 +397,8 @@ function renderEl(el: El): void {
   if (el.locked) cls.push("locked");
   // 論点があるセクションでは、論点が見出しになり、題名は小さい分類の札になる
   if (el.type === "container" && el.question) cls.push("asking");
+  // 透明な枠。枠線・背景・題名の札を出さない。マウスを乗せたとき（hover）と選んだときだけ、点線の輪郭を出す
+  if (el.type === "container" && el.frame === "none") cls.push("frameless", ...(hoverFrame === el.id ? ["hover"] : []));
   n.className = cls.join(" ");
   n.style.left = `${el.x ?? 0}px`;
   n.style.top = `${el.y ?? 0}px`;
@@ -447,6 +449,11 @@ function renderEl(el: El): void {
       break;
     }
     case "container":
+      // 透明な枠は、題名の札の代わりに、縁を掴むための見えない帯を置く（輪郭が出ている間だけ掴める。board.css）
+      if (el.frame === "none") {
+        for (const side of ["t", "r", "b", "l"]) n.append(div(`fedge ${side}`));
+        break;
+      }
       n.append(div("ttl", el.title ?? ""));
       if (el.question || el.answer) {
         const head = div("shead");
@@ -1404,13 +1411,15 @@ function renderBar(): void {
   if (has("container")) {
     // 中身の並べ方。列の数を選ぶと、中身を詰めて並べ、セクションの高さを中身に合わせる
     sep();
-    const now = shared(sel.filter((e) => e.type === "container").map((e) => String(e.cols ?? 0)));
+    const now = shared(sel.filter((e) => e.type === "container" && e.frame !== "none").map((e) => String(e.cols ?? 0)));
     if (sel.length === 1 && first?.type === "container") {
       const on = focusId === first.id;
       add(button("注目", on, () => sendFocus(on ? null : first.id), "このセクションを残して、ほかを薄くする"));
     }
-    if (sel.length === 1 && first?.type === "container") add(button("論点", false, () => editSectionField(first, "question"), "論点を書く"), button("結論", false, () => editSectionField(first, "answer"), "結論を書く"));
-    add(picker("中身の並べ方", COLS_OPTIONS, COLS_LABEL, COLS_OPTIONS.find((o) => o === now) ?? null, (v) => patchAll(["container"], { cols: v === "0" ? null : Number(v) })));
+    // 透明な枠には、論点・結論と、列の並べ方を書けない（model.ts の parseEl が断る）
+    const framed = sel.filter((e) => e.type === "container" && e.frame !== "none");
+    if (sel.length === 1 && first?.type === "container" && first.frame !== "none") add(button("論点", false, () => editSectionField(first, "question"), "論点を書く"), button("結論", false, () => editSectionField(first, "answer"), "結論を書く"));
+    if (framed.length > 0) add(picker("中身の並べ方", COLS_OPTIONS, COLS_LABEL, COLS_OPTIONS.find((o) => o === now) ?? null, (v) => void setOps(framed.map((e) => ({ id: e.id, patch: { cols: v === "0" ? null : Number(v) } })))));
   }
   if (sel.length === 1 && first?.type === "gantt") {
     sep();
@@ -1485,6 +1494,8 @@ function startEdit(id: string, target: EventTarget | null): void {
     if (v !== null) void setOps([{ id, patch: { label: v === "" ? null : v } }]);
     return;
   }
+  // 透明な枠には、直す文字が無い
+  if (el.type === "container" && el.frame === "none") return;
   if (el.type === "container" && target instanceof Element && target.closest(".sq, .sa")) {
     editSectionField(el, target.closest(".sq") ? "question" : "answer");
     return;
@@ -1619,6 +1630,26 @@ function setTool(next: Tool): void {
   tool = next;
   for (const b of document.querySelectorAll("#tools button")) b.setAttribute("aria-pressed", String(b.getAttribute("data-tool") === next));
   stage.classList.toggle("tool-add", next !== "select");
+}
+
+/** マウスが上にある透明な枠の id。いちばん内側（面積がいちばん小さい）もの */
+let hoverFrame: string | null = null;
+/**
+ * マウスの位置から、輪郭を出す透明な枠を決めて、印（hover）を付け替える。
+ * WHY 位置で決める: 透明な枠は、中の空いた所で範囲選択を始められるように、マウスを受けない（pointer-events: none）。:hover が効かない
+ */
+function trackFrameHover(p: Point): void {
+  let best: { id: string; area: number } | null = null;
+  for (const el of els.values()) {
+    if (el.type !== "container" || el.frame !== "none") continue;
+    const b = boxOf(el);
+    if (!b || p[0] < b.x || p[0] > b.x + b.w || p[1] < b.y || p[1] > b.y + b.h) continue;
+    if (!best || b.w * b.h < best.area) best = { id: el.id, area: b.w * b.h };
+  }
+  const next = best?.id ?? null;
+  if (next === hoverFrame) return;
+  for (const id of [hoverFrame, next]) if (id !== null) nodes.get(id)?.classList.toggle("hover", id === next);
+  hoverFrame = next;
 }
 
 function hitId(target: EventTarget | null): string | null {
@@ -1782,7 +1813,10 @@ stage.addEventListener("pointerdown", (ev) => {
 
 stage.addEventListener("pointermove", (ev) => {
   const g = gesture;
-  if (!g) return;
+  if (!g) {
+    if (!exporting) trackFrameHover(toWorld(ev));
+    return;
+  }
   const p = toWorld(ev);
   switch (g.kind) {
     case "pan":

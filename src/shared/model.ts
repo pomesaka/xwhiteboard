@@ -7,6 +7,11 @@ import { collect, itemsOf, rowsFor } from "./summary.ts";
 import { expandTemplate } from "./template.ts";
 import { SIDES, type Side } from "./route.ts";
 
+/** セクションの枠の描き方。none だけ（書かなければ、ふつうのセクション） */
+export const FRAMES = ["none"] as const;
+/** 透明な枠に書けない項目。見せる場所（題名の札、論点と結論の帯）が無く、cols は図の配置を崩す */
+const FRAMELESS_DENY = ["cols", "title", "question", "answer"] as const;
+
 export const TYPES = ["shape", "container", "text", "arrow", "table", "image", "stroke", "comment", "gantt", "summary"] as const;
 export const SPEAKERS = ["human", "claude"] as const;
 export const COLORS = ["yellow", "orange", "red", "pink", "purple", "blue", "teal", "green", "gray", "white", "ink"] as const;
@@ -88,6 +93,8 @@ export interface El {
   align?: (typeof ALIGNS)[number];
   shape?: ShapeKind;
   title?: string;
+  /** セクションの枠の描き方。none は透明な枠（枠線・背景・題名の札を出さない）。図を 1 つのまとまりにするのに使う */
+  frame?: (typeof FRAMES)[number];
   from?: End;
   to?: End;
   label?: string;
@@ -196,7 +203,7 @@ export const OUTER_GAP = 60;
 
 const FIELDS: Record<ElType, readonly string[]> = {
   shape: ["x", "y", "w", "h", "text", "title", "who", "status", "carriedFrom", "due", "tag", "color", "shape", "size", "align", "border", "hollow", "dashed"],
-  container: ["x", "y", "w", "h", "title", "question", "answer", "color", "cols"],
+  container: ["x", "y", "w", "h", "title", "question", "answer", "color", "cols", "frame"],
   text: ["x", "y", "w", "text", "size", "align", "color"],
   arrow: ["from", "to", "label", "dashed", "heads", "color", "route", "fromSide", "toSide", "bends", "startHead", "endHead"],
   table: ["x", "y", "w", "head", "rows"],
@@ -503,6 +510,10 @@ export function parseEl(raw: unknown): Res<El> {
         if (!Array.isArray(v) || v.length < 2 || !v.every(isPoint)) return fail("points は [x, y] を 2 つ以上");
         el.points = v;
         break;
+      case "frame":
+        if (!isOneOf(FRAMES, v)) return fail(`frame は ${FRAMES.join(" | ")} だけ（書かなければ、ふつうのセクション）: ${JSON.stringify(v)}`);
+        el.frame = v;
+        break;
     }
   }
   for (const k of REQUIRED[type]) {
@@ -510,6 +521,10 @@ export function parseEl(raw: unknown): Res<El> {
   }
   if (el.carriedFrom !== undefined && el.status !== undefined && !isOneOf(CARRIABLE, el.status)) return fail("carriedFrom を書くなら、status は carried か todo か open か、書かない");
   if (type === "image" && (el.src === undefined) === (el.svg === undefined)) return fail("image には src か svg のどちらか 1 つを書く");
+  if (el.frame === "none") {
+    const denied = FRAMELESS_DENY.find((k) => raw[k] !== undefined);
+    if (denied !== undefined) return fail(`frame: "none" のセクション（透明な枠）に ${denied} は書けない。透明な枠は、図や位置に意味がある配置を、見た目を増やさずに 1 つのまとまりにするためのもの。題名や論点を見せるなら frame を書かない`);
+  }
   if (type === "summary" && el.w !== undefined && el.w < SUMMARY_MIN_W) return fail(`summary の w は ${SUMMARY_MIN_W} 以上（行の文字が入らない）`);
   return ok(el);
 }
@@ -586,6 +601,8 @@ export const SECTION_A_FONT = 15;
  * 文字の高さは見積もり（折り返しの行の数 × 行の高さ）。
  */
 export function sectionTop(c: El): number {
+  // 透明な枠は、題名の札を出さないので、上の余白だけ
+  if (c.frame === "none") return PAD;
   const inner = Math.max(SECTION_Q_FONT, (c.w ?? 0) - PAD * 2);
   const lines = (text: string, px: number, width: number): number => text.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(textWidth(l, px) / width)), 0);
   // 論点は行の高さ 1.4 と下の間 8。結論は行の高さ 1.5、帯の上下の余白 12、左右の余白 20（結論の札のぶん、2 文字ぶん狭い）、下の間 8
@@ -1553,7 +1570,8 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         // WHY: 中身を置き去りにすると、並べ直しが、空のセクションと読んで畳む。
         // WHY このまとまりでもう動かした要素は連れていかない: 画面は、選んだ順に、セクションと中身を絶対座標の set で送る。中身の set が先に来ると、2 回動く。
         // セクションを 2 つ動かすと、先のセクションが連れていった中身が、後のセクションの動かす前の枠に入って、2 回動く
-        const within = moved && el.type === "container" && el.cols !== undefined ? ridersOf(doc.elements, el) : [];
+        // 透明な枠も、中身を連れていく。WHY: 図を 1 つのまとまりとして動かすための枠で、枠だけ動くと図が枠の外に残る
+        const within = moved && el.type === "container" && (el.cols !== undefined || el.frame === "none") ? ridersOf(doc.elements, el) : [];
         const riders = new Set(within.map((e) => e.id).filter((id) => !relocated.has(id)));
         replace(r.value);
         touch(el.id);
@@ -1629,6 +1647,8 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
           do doc.seq += 1;
           while (used(doc.seq));
         }
+        // 型は、id を、全体を囲む透明な枠の id に使う
+        if (typeof op.id === "string" && byId.has(op.id)) return fail(`${at}: id ${op.id} の要素はもうある。型は、この id を、全体を囲む透明な枠に使う。別の id を書く`);
         const expanded = expandTemplate(op, b ? [b.x + b.w + OUTER_GAP, b.y] : [0, 0], `tp${doc.seq}`);
         if (!expanded.ok) return fail(`${at}: ${expanded.error}`);
         queue.splice(i + 1, 0, ...expanded.value);

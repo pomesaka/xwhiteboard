@@ -298,6 +298,50 @@
   /* 中の空いた場所は背景として扱う（範囲選択を始められるように）。つかめるのは題名だけ */
   pointer-events: none;
 }
+/* 透明な枠（frame: "none"）。図を 1 つのまとまりにするための、見えない枠。枠線・背景・題名の札を出さない（書き出しにも出ない）。
+   マウスを乗せたとき（hover。main.ts が位置で付ける）と選んだときだけ、うすい点線の輪郭を出す。輪郭が出ている間は、縁（.fedge）を掴んで動かせる */
+.container.frameless {
+  border: 1.5px dashed transparent;
+  background: transparent;
+}
+.container.frameless.hover,
+.container.frameless.sel {
+  border-color: color-mix(in srgb, var(--el-bd) 55%, transparent);
+}
+.container .fedge {
+  position: absolute;
+  pointer-events: none;
+  cursor: grab;
+}
+.container.frameless.hover .fedge,
+.container.frameless.sel .fedge {
+  pointer-events: auto;
+}
+/* 縁の帯の太さは 12。枠線の内と外に 6 ずつ */
+.container .fedge.t {
+  left: -6px;
+  right: -6px;
+  top: -6px;
+  height: 12px;
+}
+.container .fedge.b {
+  left: -6px;
+  right: -6px;
+  bottom: -6px;
+  height: 12px;
+}
+.container .fedge.l {
+  top: -6px;
+  bottom: -6px;
+  left: -6px;
+  width: 12px;
+}
+.container .fedge.r {
+  top: -6px;
+  bottom: -6px;
+  right: -6px;
+  width: 12px;
+}
 .container .ttl {
   pointer-events: auto;
   position: absolute;

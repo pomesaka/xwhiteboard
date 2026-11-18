@@ -84,7 +84,9 @@ export function board(r: Rng): Doc {
       }
       const id = `s${cx}${cy}`;
       const cols = r() < 0.7 ? { cols: int(r, 1, 5) } : {};
-      const ops: Op[] = [{ op: "add", el: { id, type: "container", x: cx * 800, y, w: pick(r, [504, 400, 740]), ...(r() < 0.3 ? { question: "来期の採用は何人か" } : {}), ...cols } }];
+      // 列で並べないセクションの 2 割は、透明な枠（論点を書けない）
+      const look = cols.cols === undefined && r() < 0.2 ? { frame: "none" } : r() < 0.3 ? { question: "来期の採用は何人か" } : {};
+      const ops: Op[] = [{ op: "add", el: { id, type: "container", x: cx * 800, y, w: pick(r, [504, 400, 740]), ...look, ...cols } }];
       secs.push(id);
       const m = int(r, 0, 7);
       for (let i = 0; i < m; i++) ops.push({ op: "add", in: id, el: { id: `m${n++}`, ...solid(r) } });
@@ -362,7 +364,8 @@ export function tidyBoard(r: Rng): Doc {
       const id = `s${n++}`;
       const w = int(r, 300, 900, 10);
       const arranged = r() < 0.5;
-      const ops: Op[] = [{ op: "add", el: { id, type: "container", ...cell, w, ...(arranged ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10) }), ...(r() < 0.2 ? { locked: true } : {}) } }];
+      // 列で並べないセクションの 2 割は、透明な枠
+      const ops: Op[] = [{ op: "add", el: { id, type: "container", ...cell, w, ...(arranged ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10), ...(r() < 0.2 ? { frame: "none" } : {}) }), ...(r() < 0.2 ? { locked: true } : {}) } }];
       doc = must(doc, ops);
       // 上に、見出しの文字。間は 40 と 60 を挟んで散らす（揃えるときは、40 以内なら一緒に動き、それより遠ければ障害物）
       if (r() < 0.4) doc = must(doc, [{ op: "add", el: { id: `h${n++}`, type: "text", x: cell.x + int(r, -60, 200, 10), y: cell.y - int(r, 40, 220, 10), text: "見出し" } }]);
@@ -408,7 +411,7 @@ export function messyBoard(r: Rng): Doc {
     const p = { x: int(r, -400, 2400, 10), y: int(r, -400, 2400, 10) };
     const q = r();
     let el: Op;
-    if (q < 0.4) el = { id: `s${i}`, type: "container", ...p, w: int(r, 100, 900, 10), ...(r() < 0.3 ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10) }), ...(r() < 0.2 ? { locked: true } : {}) };
+    if (q < 0.4) el = { id: `s${i}`, type: "container", ...p, w: int(r, 100, 900, 10), ...(r() < 0.3 ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10), ...(r() < 0.25 ? { frame: "none" } : {}) }), ...(r() < 0.2 ? { locked: true } : {}) };
     else if (q < 0.5) el = { id: `b${i}`, type: "summary", show: pick(r, ["decided", "open", "todo"]), ...p };
     else if (q < 0.8) el = { id: `f${i}`, ...solid(r), ...p, ...(r() < 0.3 ? { status: "decided" } : {}) };
     else if (q < 0.9) el = { id: `k${i}`, type: "comment", ...p, w: 60, h: 60 };

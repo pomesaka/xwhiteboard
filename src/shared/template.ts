@@ -1,7 +1,7 @@
 // 型（2×2 の matrix、左右の立場を並べる versus、論点を分ける tree）を、ふつうの要素を足す操作の並びに展開する。
 // WHY 専用の要素にしない: 展開した後は、セクション・付箋・文字・矢印なので、人がいつもの操作で直せて、見た目の検査もそのまま効く。
 // エージェントは中身を渡すだけで、座標と大きさはここで決める。
-import { COLORS, DEFAULT_SIZE, GAP, PAD, TITLE_H, colWidth, isRecord, type Point, type Res } from "./model.ts";
+import { COLORS, DEFAULT_SIZE, GAP, PAD, TITLE_H, boxOf, colWidth, isRecord, parseEl, type Box, type Point, type Res } from "./model.ts";
 
 export const TEMPLATES = ["matrix", "versus", "tree"] as const;
 
@@ -27,6 +27,8 @@ const TITLE_ROW = 64;
 const NODE_H = 72;
 const NODE_GAP_X = 70;
 const MAX_TREE_NODES = 40;
+/** 透明な枠の、左右の余白の合計。w（型の全体の幅）は、透明な枠の幅。関数で読む理由は noteSize と同じ（model.ts の PAD が、まだ初期化されていない） */
+const framePad = (): number => PAD * 2;
 
 /** 付箋に渡せる項目。場所と大きさは、型が決める */
 const NOTE_KEYS = ["text", "title", "who", "status", "carriedFrom", "due", "tag", "color"];
@@ -121,7 +123,7 @@ function matrix(op: Record<string, unknown>, id: string, [x0, y0]: Point): Res<O
     }
     cells.push(out);
   }
-  const cw = cellWidth(op.w, SIDE_W + GAP);
+  const cw = cellWidth(op.w, SIDE_W + GAP + framePad());
   if (!cw.ok) return cw;
   const cellW = cw.value;
   const ops: Ops = [];
@@ -158,7 +160,7 @@ function versus(op: Record<string, unknown>, id: string, [x0, y0]: Point): Res<O
   if (!left.ok) return left;
   const right = parseCell(op.right, "right");
   if (!right.ok) return right;
-  const cw = cellWidth(op.w, VS_W);
+  const cw = cellWidth(op.w, VS_W + framePad());
   if (!cw.ok) return cw;
   const cellW = cw.value;
   const ops: Ops = [];
@@ -247,12 +249,25 @@ export function expandTemplate(op: Record<string, unknown>, origin: Point, prefi
   const allowed: Record<(typeof TEMPLATES)[number], string[]> = { matrix: ["title", "w", "xAxis", "yAxis", "cells"], versus: ["title", "w", "left", "right"], tree: ["title", "root"] };
   for (const k of Object.keys(op)) if (!["op", "kind", "id", "x", "y", ...allowed[kind]].includes(k)) return fail(`${kind} に ${k} は無い。書ける項目: id, x, y, ${allowed[kind].join(", ")}`);
   if (op.title !== undefined && typeof op.title !== "string") return fail("title は文字列");
-  switch (kind) {
-    case "matrix":
-      return matrix(op, id, at);
-    case "versus":
-      return versus(op, id, at);
-    case "tree":
-      return tree(op, id, at);
-  }
+  // 中身は、透明な枠の上と左の余白（PAD）の内側に置く。x・y は、透明な枠の左上
+  const inner: Point = [at[0] + PAD, at[1] + PAD];
+  const body = kind === "matrix" ? matrix(op, id, inner) : kind === "versus" ? versus(op, id, inner) : tree(op, id, inner);
+  if (!body.ok) return body;
+  return { ok: true, value: [frameOp(id, at, body.value), ...body.value] };
+}
+
+/**
+ * 型の全体を囲む透明な枠（frame: "none"）を足す操作。id は型の id、左上は at、右と下は、中身の外側から PAD 空ける。
+ * WHY 囲む: 型の枠どうし（matrix と versus）は矢印でつながっていない。囲まないと、format が枠を 1 つずつ列に揃えて、2×2 や左右の並びが崩れる。
+ * tree も、節の位置で親子を表すので囲む。
+ */
+function frameOp(id: string, [x, y]: Point, ops: Ops): Record<string, unknown> {
+  const boxes = ops.flatMap((o): Box[] => {
+    const r = parseEl(o.el);
+    const b = r.ok ? boxOf(r.value) : null;
+    return b ? [b] : [];
+  });
+  const right = Math.max(x + PAD, ...boxes.map((b) => b.x + b.w));
+  const bottom = Math.max(y + PAD, ...boxes.map((b) => b.y + b.h));
+  return { op: "add", el: { id, type: "container", frame: "none", x, y, w: right + PAD - x, h: bottom + PAD - y } };
 }

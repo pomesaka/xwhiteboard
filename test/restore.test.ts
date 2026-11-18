@@ -68,6 +68,23 @@ describe("画面の操作 → 元に戻す で、右へ広げて右のものが�
   ])("%s", (_name, g) => expectRoundtrip(side, g));
 });
 
+// 透明な枠 fig の中に、セクション p（中身 p1）と q を矢印でつないだ図
+const framed = apply(emptyDoc("t"), [
+  { op: "add", el: { id: "fig", type: "container", frame: "none", x: 0, y: 0, w: 800, h: 300 } },
+  { op: "add", el: { id: "p", type: "container", x: 24, y: 24, w: 300, h: 160 } },
+  { op: "add", in: "p", el: { id: "p1", type: "shape", text: "p1" } },
+  { op: "add", el: { id: "q", type: "container", x: 424, y: 24, w: 300, h: 160 } },
+  { op: "add", el: { id: "pq", type: "arrow", from: "p", to: "q" } },
+]).doc;
+
+describe("画面の操作 → 元に戻す で、透明な枠のボードが元に戻る", () => {
+  test.each<[string, Gesture | null]>([
+    ["透明な枠を、中身ごと動かす", drag(framed, ["fig"], 300, 200)],
+    ["透明な枠を消す（中身は残る）", rm(framed, ["fig"])],
+    ["透明な枠を広げる", resize(framed, "fig", 1000, 400)],
+  ])("%s", (_name, g) => expectRoundtrip(framed, g));
+});
+
 // まとめの帯 2 つ（決定 d、未決 o）を横に並べ、その下に、列で並べるセクション t（付箋 3 枚）と、自由に置くセクション u（付箋 1 枚）。帯の下の端のすぐ下に線 l2
 const banded = apply(emptyDoc("t"), [
   { op: "add", el: { id: "d", type: "summary", show: "decided", x: 0, y: 0 } },

@@ -1,6 +1,6 @@
 // ボードの見た目の問題を、描かずに測る。エージェントが、スクショを見なくても崩れに気づけるようにする。
 // 文字と表の大きさは見積もり（model.ts の sizeOf）なので、画面で測った値とは数 px ずれる。
-import { sectionTop, CARRIABLE, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, membersOf, metaParts, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
+import { sectionTop, CARRIABLE, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, membersOf, ridersOf, metaParts, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
@@ -51,6 +51,8 @@ export type IssueKind =
   | "open-question"
   /** 列で並べるセクション（cols）の中に、別のセクションがある */
   | "nested-section"
+  /** 透明な枠（frame: "none"）に、中身が 1 つも無い */
+  | "empty-frame"
   /** 同じ状態を集めるまとめの帯（summary）が、2 つ以上ある */
   | "duplicate-summary"
   /** 固定したセクションの中に、同じ状態の付箋が並んでいる（手で写したまとめ） */
@@ -87,6 +89,8 @@ export const LEVEL: Record<IssueKind, IssueLevel> = {
   "bare-url": "break",
   "narrow-column": "break",
   "nested-section": "break",
+  // 見えない枠が場所を取り、format で 1 つのまとまりとして動く。画面では気づけないが、見た目は崩れていない
+  "empty-frame": "style",
   "summary-in-section": "break",
   // 書いた条件が、意図した付箋を集めていない
   "empty-summary": "break",
@@ -466,6 +470,11 @@ function summaryIssues(doc: Doc): Found[] {
   return issues;
 }
 
+/** 検査の文に書く、セクションの呼び方。透明な枠は、画面に名前が出ないので、そう書く */
+function sectionName(c: El): string {
+  return c.frame === "none" ? `透明な枠 ${c.id} ` : `セクション ${c.id} `;
+}
+
 /**
  * ボードの検査。崩れ（level: break）を返す。ctx.style を付けると、書き方の提案（level: style）も一緒に返す
  */
@@ -501,6 +510,7 @@ function findIssues(doc: Doc, ctx: CheckContext): Found[] {
   }
   // 論点を書いたセクションの結論。会議の終わりに、結論の出ていない論点を拾えるようにする
   for (const el of doc.elements) {
+    if (el.type === "container" && el.frame === "none" && ridersOf(doc.elements, el).length === 0) issues.push({ kind: "empty-frame", ids: [el.id], message: `透明な枠 ${el.id} の中に何も無い。見えないまま場所を取り、format で 1 つのまとまりとして動く。囲む図を中へ入れるか、枠を消す` });
     if (el.type === "container" && el.question && !el.answer) issues.push({ kind: "open-question", ids: [el.id], message: `セクション ${el.id} の論点「${el.question}」に結論（answer）が無い。決まったら書く。持ち越すなら、その旨を answer に書く` });
   }
   // 列で並べるセクションの、列の幅
@@ -558,17 +568,18 @@ function findIssues(doc: Doc, ctx: CheckContext): Found[] {
         const cx = m.box.x + m.box.w / 2;
         const cy = m.box.y + m.box.h / 2;
         const member = cx >= s.box.x && cx <= s.box.x + s.box.w && cy >= s.box.y && cy <= s.box.y + s.box.h;
-        if (member) issues.push({ kind: "outside-section", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} から ${round(out)} はみ出している`, px: round(out) });
-        else issues.push({ kind: "on-section-edge", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} の枠に ${round(Math.min(hit.w, hit.h))} かかっている`, px: round(Math.min(hit.w, hit.h)) });
+        if (member) issues.push({ kind: "outside-section", ids: [m.el.id, s.el.id], message: `${m.el.id} が${sectionName(s.el)}から ${round(out)} はみ出している`, px: round(out) });
+        else issues.push({ kind: "on-section-edge", ids: [m.el.id, s.el.id], message: `${m.el.id} が${sectionName(s.el)}の枠に ${round(Math.min(hit.w, hit.h))} かかっている${s.el.frame === "none" ? "。透明な枠は見えないので、画面では気づけない。枠の外へ出すか、枠を広げる" : ""}`, px: round(Math.min(hit.w, hit.h)) });
         continue;
       }
       // 題名の帯（上 TITLE_H）にかかるか、左右と下の余白が足りない
       const head = sectionTop(s.el);
       if (top < head - TOLERANCE - MIN_MARGIN) {
-        issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} の題名${head > TITLE_H ? "か論点・結論" : ""}に近い（上から ${round(top)}。${head} 空ける）`, px: round(top) });
+        const what = s.el.frame === "none" ? "上の端" : `題名${head > TITLE_H ? "か論点・結論" : ""}`;
+        issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} が${sectionName(s.el)}の${what}に近い（上から ${round(top)}。${head} 空ける）`, px: round(top) });
       } else if (Math.min(left, right, bottom) < MIN_MARGIN) {
         const margin = Math.min(left, right, bottom);
-        issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} の端に詰まっている（余白 ${round(margin)}。${PAD} 空ける）`, px: round(margin) });
+        issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} が${sectionName(s.el)}の端に詰まっている（余白 ${round(margin)}。${PAD} 空ける）`, px: round(margin) });
       }
     }
   }

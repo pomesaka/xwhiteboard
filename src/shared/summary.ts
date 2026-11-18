@@ -29,7 +29,7 @@ function labelOf(el: El): string {
 
 /**
  * 付箋ごとの、入っているセクション。中身の決まりは membersOf と同じ（中心が枠の中）。
- * 2 つ以上の枠に入る付箋は、面積がいちばん小さい枠のセクション
+ * 2 つ以上の枠に入る付箋は、面積がいちばん小さい枠のセクション。透明な枠（frame: "none"）は数えない
  */
 function sectionsOf(els: readonly El[]): Map<string, El> {
   const area = (c: El): number => {
@@ -38,7 +38,8 @@ function sectionsOf(els: readonly El[]): Map<string, El> {
   };
   const out = new Map<string, El>();
   for (const c of els) {
-    if (c.type !== "container") continue;
+    // 透明な枠は、題名を見せない。行には添えず、その外側のセクションがあれば、そちらを添える
+    if (c.type !== "container" || c.frame === "none") continue;
     for (const m of membersOf(els, c)) {
       const now = out.get(m.id);
       if (!now || area(c) < area(now)) out.set(m.id, c);

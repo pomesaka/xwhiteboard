@@ -97,19 +97,21 @@ describe("型は、ふつうの要素に展開される", () => {
   test("tree は、根から順に id を振り、親を子の並びの真ん中の高さに置き、親から子へ線を引く", () => {
     const doc = build([{ op: "template", kind: "tree", id: "tr", root: { text: "根", children: [{ text: "A", children: ["A1", "A2"] }, "B"] } }]);
     expect(doc.elements.filter((e) => e.type === "shape").map(({ id, text, x, y }) => ({ id, text, x, y }))).toEqual([
-      { id: "tr-1", text: "根", x: 0, y: 88 },
-      { id: "tr-2", text: "A", x: 290, y: 44 },
-      { id: "tr-3", text: "A1", x: 580, y: 0 },
-      { id: "tr-4", text: "A2", x: 580, y: 88 },
-      { id: "tr-5", text: "B", x: 290, y: 176 },
+      // 透明な枠の余白（24）の内側に置く
+      { id: "tr-1", text: "根", x: 24, y: 112 },
+      { id: "tr-2", text: "A", x: 314, y: 68 },
+      { id: "tr-3", text: "A1", x: 604, y: 24 },
+      { id: "tr-4", text: "A2", x: 604, y: 112 },
+      { id: "tr-5", text: "B", x: 314, y: 200 },
     ]);
     expect(doc.elements.filter((e) => e.type === "arrow").map((e) => `${String(e.from)}→${String(e.to)}`).sort()).toEqual(["tr-1→tr-2", "tr-1→tr-5", "tr-2→tr-3", "tr-2→tr-4"]);
   });
 
   test.each([
-    ["versus。書かなければ 880", versus, { left: 0, right: 880 }],
+    // 全体は、透明な枠の幅（中身の左右に 24 ずつ）
+    ["versus。書かなければ 928", versus, { left: 0, right: 928 }],
     ["versus。w を書けば、その幅", { ...versus, w: 740 }, { left: 0, right: 740 }],
-    ["matrix。書かなければ 966", matrix, { left: 0, right: 966 }],
+    ["matrix。書かなければ 1014", matrix, { left: 0, right: 1014 }],
     ["matrix。w を書けば、その幅", { ...matrix, w: 740 }, { left: 0, right: 740 }],
   ])("型の全体の幅: %s", (_name, op, expected) => {
     expect(span(build([op]))).toEqual(expected);
@@ -143,8 +145,8 @@ describe("型は、ふつうの要素に展開される", () => {
 
   test("展開した枠には、後から in で足せる", () => {
     const doc = build([versus, { op: "add", in: "vs-r", el: { id: "more", type: "shape", text: "足した" } }]);
-    // 右の枠の 1 枚め（y 116、高さ 110）の下に、間を 16 空けて入る
-    expect(get(doc, "more")).toMatchObject({ x: 504, y: 242, w: 220, h: 110 });
+    // 右の枠の 1 枚め（y 140、高さ 110）の下に、間を 16 空けて入る（透明な枠の余白 24 のぶん、右下にずれている）
+    expect(get(doc, "more")).toMatchObject({ x: 528, y: 266, w: 220, h: 110 });
     expect(checkBoard(doc)).toEqual([]);
   });
 });
@@ -153,9 +155,9 @@ describe("型の、通る境界", () => {
   test.each([
     ["id が 24 文字", { ...versus, id: "a".repeat(24) }],
     ["木の節が 40", { op: "template", kind: "tree", id: "tr", root: chain(40) }],
-    ["versus の w が 480（枠の幅が 200）", { ...versus, w: 480 }],
-    ["matrix の w が 566（枠の幅が 200）", { ...matrix, w: 566 }],
-    ["根だけの木 tr と木 tr-1 は、id がぶつからない", [{ op: "template", kind: "tree", id: "tr", root: "根" }, { op: "template", kind: "tree", id: "tr-1", root: "根" }]],
+    // w は、透明な枠の幅。中身の左右に 24 ずつ足す
+    ["versus の w が 528（枠の幅が 200）", { ...versus, w: 528 }],
+    ["matrix の w が 614（枠の幅が 200）", { ...matrix, w: 614 }],
   ])("%s", (_name, op) => {
     expect(applyOps(emptyDoc("t"), Array.isArray(op) ? op : [op]).ok).toBe(true);
   });
@@ -172,13 +174,16 @@ describe("型の書き間違いは、理由を付けて断る", () => {
     ["知らない項目", { ...versus, middle: "x" }, "versus に middle は無い"],
     ["x だけを書いた", { ...versus, x: 10 }, "x と y は"],
     ["同じ id で 2 回", [versus, versus], "はもうある"],
+    ["型の id と同じ id の要素がもうある", [{ op: "add", el: { id: "vs", type: "shape", x: 2000, y: 0 } }, versus], "id vs の要素はもうある。型は、この id を、全体を囲む透明な枠に使う"],
     ["付箋の欄の値が違う", { ...versus, left: cell("a", [{ text: "x", status: "done" }]) }, "status は"],
     ["木の根が無い", { op: "template", kind: "tree" }, "root"],
     ["id が 25 文字", { ...versus, id: "a".repeat(25) }, "24 文字まで"],
     ["木の節が 41", { op: "template", kind: "tree", id: "tr", root: chain(41) }, "40 まで"],
     ["木 tr の線（tr-1-2）と、木 tr-1 の節（tr-1-2）は、id がぶつかる", [tree, { ...tree, id: "tr-1" }], "はもうある"],
-    ["versus の w が 479（枠の幅が 200 より狭い）", { ...versus, w: 479 }, "w は 480 以上"],
-    ["matrix の w が 565（枠の幅が 200 より狭い）", { ...matrix, w: 565 }, "w は 566 以上"],
+    ["versus の w が 527（枠の幅が 200 より狭い）", { ...versus, w: 527 }, "w は 528 以上"],
+    ["matrix の w が 613（枠の幅が 200 より狭い）", { ...matrix, w: 613 }, "w は 614 以上"],
+    // 型の透明な枠の id は、型の id そのもの。木 tr の根（tr-1）と、木 tr-1 の透明な枠（tr-1）がぶつかる
+    ["根だけの木 tr と木 tr-1", [{ op: "template", kind: "tree", id: "tr", root: "根" }, { op: "template", kind: "tree", id: "tr-1", root: "根" }], "はもうある"],
     ["w が数値でない", { ...versus, w: "740" }, "w は数値"],
     ["tree に w を書いた", { ...tree, w: 740 }, "tree に w は書けない"],
   ])("%s", (_name, ops, message) => {

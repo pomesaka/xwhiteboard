@@ -108,6 +108,7 @@ function withFit(els: readonly El[], place: (fitted: readonly El[]) => Res<Forma
  * 変えない要素は、同じ物を返す（withFit が、縮めた要素を物の同一性で見分ける）。
  * - 中身の無いセクションは縮めない。人が場所を取っておいた枠のことがある
  * - 固定したセクションと、固定したセクションの枠に収まったセクションは縮めない（format は固定したものを中身ごと動かさない）
+ * - 透明な枠（frame: "none"）の中のセクションは縮めない。透明な枠そのものは、ほかのセクションと同じに縮める
  * - 中身に数えるのは、枠の中の、場所をふさぐ要素（付箋、文字、表、画像、ガント）と、まとめの帯と、中のセクション（中身ごと）。中のセクションを先に縮める
  *   WHY 中のセクションも数える: 数えないと、外の枠が中のセクションを切って縮み、枠がかかり合って format が断る
  *   WHY 線、座標の矢印、コメントは数えない: 並べるときに障害物にしないので、動いた枠が外の線を取り込むことがある。
@@ -122,10 +123,12 @@ export function fitSections(els: readonly El[]): El[] {
     return b ? [{ c, b }] : [];
   });
   const lockedBoxes = sections.flatMap(({ c, b }) => (c.locked === true ? [b] : []));
+  const frames = sections.filter(({ c }) => c.frame === "none");
   // 小さい順に縮める。中のセクションは外のセクションより小さい
   for (const { c, b } of [...sections].sort((p, q) => p.b.w * p.b.h - q.b.w * q.b.h)) {
     // 固定したセクション自身も、lockedBoxes の自分の枠に収まるので、ここで外れる
-    if (c.cols !== undefined || lockedBoxes.some((l) => within(b, l))) continue;
+    // 透明な枠の中のセクションも縮めない。WHY: 透明な枠は、図の配置を守るためのもの。型の枠のように、横に並ぶ枠の高さをそろえてあることがある
+    if (c.cols !== undefined || lockedBoxes.some((l) => within(b, l)) || frames.some((f) => f.c.id !== c.id && within(b, f.b))) continue;
     const i = index.get(c.id) ?? -1;
     const now = out[i];
     if (!now) continue;
