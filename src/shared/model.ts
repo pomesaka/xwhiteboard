@@ -1554,7 +1554,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         break;
       }
       case "format": {
-        // セクションとまとめの帯を、詰めて置き直す。置き場所は shared/format.ts が決める。ここは、その結果を書くだけ。
+        // セクションとまとめの帯を、揃える（既定）か組み直す（rebuild）。置き場所は shared/format.ts が決める。ここは、その結果を書くだけ。
         // 動かした要素は、場所を書いた要素（placed）に入れない。WHY: 列で並べるセクションは中身ごと同じだけ動くので、並ぶ順を位置から読み直す理由が無い
         const plan = formatOp(doc.elements, op);
         if (!plan.ok) return fail(`${at}: ${plan.error}`);

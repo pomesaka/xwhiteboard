@@ -1,6 +1,6 @@
 // 乱数で、ボードと操作を作る。テスト（fuzz.test.ts）だけが使う。種が同じなら、同じ並びになる。
 import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf, PAD, sectionTop, summaryHeight, type Box, type Doc, type El, type Point } from "../src/shared/model.ts";
-import { planFormat } from "../src/shared/format.ts";
+import { planAlign, planRebuild } from "../src/shared/format.ts";
 import { itemsOf, summarize } from "../src/shared/summary.ts";
 import { add, drag, resize, rm, setOps, type Gesture, type Op } from "./screen.ts";
 
@@ -346,6 +346,8 @@ export function tidyBoard(r: Rng): Doc {
       const arranged = r() < 0.5;
       const ops: Op[] = [{ op: "add", el: { id, type: "container", ...cell, w, ...(arranged ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10) }), ...(r() < 0.2 ? { locked: true } : {}) } }];
       doc = must(doc, ops);
+      // 上に、見出しの文字。間は 40 と 60 を挟んで散らす（揃えるときは、40 以内なら一緒に動き、それより遠ければ障害物）
+      if (r() < 0.4) doc = must(doc, [{ op: "add", el: { id: `h${n++}`, type: "text", x: cell.x + int(r, -60, 200, 10), y: cell.y - int(r, 40, 220, 10), text: "見出し" } }]);
       const box = boxOf(doc.elements.find((e) => e.id === id) ?? { id, type: "container" });
       const m = int(r, 0, 7);
       const inside: Op[] = [];
@@ -400,36 +402,106 @@ export function messyBoard(r: Rng): Doc {
   return doc;
 }
 
+/** 並べ直しの操作。rebuild が無ければ揃える */
+export type FormatOp = { op: "format"; rebuild?: true; cols?: number };
+
 /**
- * base に format（cols）をかけた結果が、並べ直しの決まりを破っていたら、破った決まりの名前を返す。断られたら、何も返さない。
+ * いちばん外側のセクション（ほかのセクションの枠に収まっていないもの）と、どのセクションにも入っていないまとめの帯。sized は帯の高さを入れた要素。
+ * 枠に収まったセクションは、固定していても、外のセクションの中身として動く
+ */
+function outermost(sized: El[]): El[] {
+  const boxes = sized.flatMap((e) => (e.type === "container" ? [{ id: e.id, b: boxOf(e) }] : []));
+  const within = (a: Box, o: Box): boolean => o.x <= a.x && o.y <= a.y && a.x + a.w <= o.x + o.w && a.y + a.h <= o.y + o.h;
+  const nested = (id: string, b: Box | null): boolean => b !== null && boxes.some((o) => o.id !== id && o.b !== null && within(b, o.b) && !within(o.b, b));
+  const sections = sized.filter((e) => e.type === "container");
+  const inSection = new Set(sections.flatMap((c) => membersOf(sized, c).map((m) => m.id)));
+  return sized.filter((e) => (e.type === "container" && !nested(e.id, boxOf(e))) || (e.type === "summary" && !inSection.has(e.id)));
+}
+/** 並べる対象。outermost のうち、固定していないもの。揃えるときは、まとめの帯も並べない */
+const formatTargets = (sized: El[], align: boolean): El[] => outermost(sized).filter((e) => e.locked !== true && !(align && e.type === "summary"));
+/** 動かないもの。outermost のうち、並べる対象でないもの（固定したもの。揃えるときは、まとめの帯も） */
+const formatFixed = (sized: El[], align: boolean): El[] => {
+  const targets = new Set(formatTargets(sized, align).map((e) => e.id));
+  return outermost(sized).filter((e) => !targets.has(e.id));
+};
+
+/**
+ * 揃えるときの列。横の範囲が重なるものどうしをつないだまとまりを、左の端の順に。列の中は上の端の順（同じなら左の端の順）。
+ * format.ts とは別のやり方（総当たりのつなぎ合わせ）で読む
+ */
+export function columnsOf(targets: El[]): string[][] {
+  const items = targets.flatMap((el) => {
+    const b = boxOf(el);
+    return b ? [{ id: el.id, b }] : [];
+  });
+  const group = items.map((_, i) => i);
+  const root = (i: number): number => (group[i] === i ? i : root(group[i] ?? i));
+  for (const [i, a] of items.entries()) {
+    for (const [j, c] of items.entries()) if (i < j && a.b.x < c.b.x + c.b.w && c.b.x < a.b.x + a.b.w) group[root(j)] = root(i);
+  }
+  const cols = new Map<number, typeof items>();
+  for (const [i, it] of items.entries()) cols.set(root(i), [...(cols.get(root(i)) ?? []), it]);
+  return [...cols.values()]
+    .sort((p, q) => Math.min(...p.map((t) => t.b.x)) - Math.min(...q.map((t) => t.b.x)))
+    .map((col) => col.sort((p, q) => p.b.y - q.b.y || p.b.x - q.b.x).map((t) => t.id));
+}
+
+/**
+ * base に format（op）をかけた結果が、並べ直しの決まりを破っていたら、破った決まりの名前を返す。断られたら、何も返さない。
  * tidy は、重ならずに置いたボード（tidyBoard）か。中身とセクションへの入り方、重なり、左上の決まりは、そのボードでだけ見る
  */
-export function formatViolations(base: Doc, cols: number, tidy: boolean): string[] {
-  const op = { op: "format", cols };
+export function formatViolations(base: Doc, op: FormatOp, tidy: boolean): string[] {
   const res = applyOps(base, [op]);
   if (!res.ok) return [];
   const doc = res.value.doc;
   const out = new Set<string>(violations(base, [op]));
   const before = new Map(base.elements.map((e) => [e.id, e]));
   const after = new Map(doc.elements.map((e) => [e.id, e]));
+  const align = op.rebuild !== true;
   // P1 もう一度かけても変わらない
   const again = applyOps(doc, [op]);
   if (!again.ok) out.add("2 回めが断られる");
   else if (again.value.updated.length > 0) out.add("もう一度かけると変わる");
-  // P7 返す一覧が、実際に変わった要素と同じ。試すだけの計算（planFormat）とも同じ
+  // P7 返す一覧が、実際に変わった要素と同じ。試すだけの計算（planAlign、planRebuild）とも同じ
   const changed = doc.elements.filter((e) => JSON.stringify(e) !== JSON.stringify(before.get(e.id))).map((e) => e.id).sort();
   if (res.value.updated.map((e) => e.id).sort().join(",") !== changed.join(",")) out.add("返す一覧が、動いた要素と違う");
-  const plan = planFormat(base.elements, cols);
+  const plan = align ? planAlign(base.elements) : planRebuild(base.elements, op.cols ?? 2);
   if (!plan.ok || JSON.stringify(plan.value.moved) !== JSON.stringify(res.value.updated)) out.add("試した結果と、動いた要素が違う");
-  // P6 セクションに入っていない、場所をふさぐ要素は動かない
   const sized = base.elements;
+  const sizedAfter = doc.elements;
   const sections = sized.filter((e) => e.type === "container");
   const inSome = new Set(sections.flatMap((c) => membersOf(sized, c).map((m) => m.id)));
-  for (const el of base.elements) if (isSolid(el) && !inSome.has(el.id) && JSON.stringify(el) !== JSON.stringify(after.get(el.id))) out.add("セクションに入っていない要素が動く");
+  const delta = (id: string): Point | null => {
+    const [p1, p2] = [before.get(id), after.get(id)].map((e) => (e ? boxOf(e) : null));
+    return p1 && p2 ? [p2.x - p1.x, p2.y - p1.y] : null;
+  };
+  const targetsBefore = formatTargets(sized, align);
+  /** 揃えるときの見出しの形: 並べる対象 t の真上（中心が t の横の範囲）で、間が 40 以内の文字 */
+  const headingOf = (text: El, t: El, els: El[]): boolean => {
+    const [a, b] = [boxOf(text), boxOf(els.find((e) => e.id === t.id) ?? t)];
+    if (!a || !b) return false;
+    const cx = a.x + a.w / 2;
+    const gap = b.y - (a.y + a.h);
+    return text.type === "text" && b.x <= cx && cx <= b.x + b.w && gap > 0 && gap <= 40;
+  };
+  // P6 セクションに入っていない、場所をふさぐ要素は動かない。
+  // 揃えるときの見出しだけは動いてよい。そのときは、真下にある並べる対象と同じだけ動き、動いた後もその真上にある
+  for (const el of base.elements) {
+    if (!isSolid(el) || inSome.has(el.id) || JSON.stringify(el) === JSON.stringify(after.get(el.id))) continue;
+    const d = delta(el.id);
+    const moved = after.get(el.id);
+    const follows = align && d && moved && targetsBefore.some((t) => headingOf(el, t, sized) && JSON.stringify(delta(t.id)) === JSON.stringify(d) && headingOf(moved, t, sizedAfter));
+    if (!follows) out.add("セクションに入っていない要素が動く");
+  }
+  // 固定したセクションと帯（揃えるときは、固定していない帯も）は、中身ごと動かない
+  for (const f of formatFixed(sized, align)) {
+    for (const id of [f.id, ...(f.type === "container" ? membersOf(sized, f).map((m) => m.id) : [])]) if (JSON.stringify(before.get(id)) !== JSON.stringify(after.get(id))) out.add("固定したものが動く");
+  }
+  // 揃えるときは、列の数、列の左右の順、列の中の順が変わらない
+  if (align && JSON.stringify(columnsOf(targetsBefore)) !== JSON.stringify(columnsOf(formatTargets(sizedAfter, align)))) out.add("列の分け方か順が変わる");
   if (!tidy) return [...out];
   // P2 要素の集まり、並び、セクションごとの中身が同じ
   if (base.elements.map((e) => e.id).join(",") !== doc.elements.map((e) => e.id).join(",")) out.add("要素か並びが変わる");
-  const sizedAfter = doc.elements;
   const content = (els: El[], id: string): string => {
     const c = els.find((e) => e.id === id);
     return c ? membersOf(els, c).map((m) => m.id).sort().join(",") : "";
@@ -447,20 +519,48 @@ export function formatViolations(base: Doc, cols: number, tidy: boolean): string
       if (p1 && p2 && (p1.x - b1.x !== p2.x - b2.x || p1.y - b1.y !== p2.y - b2.y)) out.add("中身が、セクションと違う量だけ動く");
     }
   }
-  // P4 並べた要素（セクションと帯）どうしと、外の要素との間が 60 以上空く
-  const placedBoxes = sizedAfter.flatMap((e) => (e.type === "container" || e.type === "summary" ? (boxOf(e) ?? []) : []));
-  const obstacleBoxes = sizedAfter.flatMap((e) => (isSolid(e) && !inSome.has(e.id) ? (boxOf(e) ?? []) : []));
+  // P4 並べた要素（セクションと帯）どうしと、外の要素との間が 60 以上空く。
+  // 揃えるときの見出し（動かす前に、並べる対象の真上 40 以内にあった文字）は、外の要素に数えない。固定したセクションと帯は、外の要素に数える
+  const targetsAfter = formatTargets(sizedAfter, align);
+  const placedBoxes = targetsAfter.flatMap((e) => boxOf(e) ?? []);
+  // 見出しになるのは、列の先頭の真上の文字だけ
+  const heads = new Set(columnsOf(targetsBefore).flatMap((col) => col.slice(0, 1)));
+  const wasHeading = (e: El): boolean => align && targetsBefore.some((t) => heads.has(t.id) && headingOf(before.get(e.id) ?? e, t, sized));
+  const obstacleBoxes = [...sizedAfter.flatMap((e) => (isSolid(e) && !inSome.has(e.id) && !wasHeading(e) ? (boxOf(e) ?? []) : [])), ...formatFixed(sizedAfter, align).flatMap((e) => boxOf(e) ?? [])];
   const apart = (a: Box, b: Box): boolean => a.x + a.w + 60 <= b.x + 0.5 || b.x + b.w + 60 <= a.x + 0.5 || a.y + a.h + 60 <= b.y + 0.5 || b.y + b.h + 60 <= a.y + 0.5;
   if (placedBoxes.some((a, i) => placedBoxes.some((b, j) => i < j && !apart(a, b)))) out.add("並べた要素どうしが近すぎる");
   if (placedBoxes.some((a) => obstacleBoxes.some((b) => !apart(a, b)))) out.add("並べた要素が、外の要素に近すぎる");
   // P5 並べる要素の全体の左上が変わらない。
   // 起点の場所が外の要素でふさがっているときだけ、x を保ったまま、その要素の下の端から 60 空けた高さへ下がる（よける決まりが先）
   const corner = (els: El[]): Point | null => {
-    const bs = els.flatMap((e) => (e.type === "container" || e.type === "summary" ? (boxOf(e) ?? []) : []));
+    const bs = els.flatMap((e) => boxOf(e) ?? []);
     return bs.length === 0 ? null : [Math.min(...bs.map((b) => b.x)), Math.min(...bs.map((b) => b.y))];
   };
-  const [c1, c2] = [corner(sized), corner(sizedAfter)];
+  const [c1, c2] = [corner(targetsBefore), corner(targetsAfter)];
   const dodged = c1 && c2 && c1[0] === c2[0] && c2[1] > c1[1] && obstacleBoxes.some((b) => b.y + b.h + 60 === c2[1]);
-  if (JSON.stringify(c1) !== JSON.stringify(c2) && !dodged) out.add("全体の左上が変わる");
+  // 揃えるときの高さは、帯のいちばん上まで上がりうるので、下の列ごとの決まりで見る。左の端だけをここで見る
+  if (align ? c1?.[0] !== c2?.[0] : JSON.stringify(c1) !== JSON.stringify(c2) && !dodged) out.add("全体の左上が変わる");
+  // 揃えるときは、列の中の間がどこも 60（障害物でよけた所を除く）で、列の中は左の端が揃い、列どうしの間が 60
+  if (align) {
+    const tops = [...targetsBefore, ...outermost(sized).filter((e) => e.type === "summary")].flatMap((e) => boxOf(e)?.y ?? []);
+    const top = tops.length > 0 ? Math.min(...tops) : undefined;
+    const boxById = new Map(targetsAfter.flatMap((e): [string, Box][] => {
+      const b = boxOf(e);
+      return b ? [[e.id, b]] : [];
+    }));
+    const cols = columnsOf(targetsAfter).map((col) => col.flatMap((id) => boxById.get(id) ?? []));
+    for (const [k, col] of cols.entries()) {
+      if (col.some((b) => b.x !== col[0]?.x)) out.add("列の中の左の端が揃わない");
+      for (const [i, b] of col.entries()) {
+        const above = col[i - 1];
+        // 列の先頭は、並べるセクションとまとめの帯の、いちばん上の高さ（よけたときを除く）
+        const want = above ? above.y + above.h + 60 : top;
+        // よけたなら、すぐ上に、下の端から 60 の障害物がある
+        if (want !== undefined && b.y !== want && !obstacleBoxes.some((o) => o.y + o.h + 60 === b.y)) out.add("列の中が詰まっていない");
+      }
+      const prev = cols[k - 1];
+      if (prev && col[0] && prev[0] && col[0].x !== prev[0].x + Math.max(...prev.map((b) => b.w)) + 60) out.add("列どうしの間が 60 でない");
+    }
+  }
   return [...out];
 }
