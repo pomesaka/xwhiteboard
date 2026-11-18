@@ -1,5 +1,6 @@
 // 付箋・図形・文字・表のセルの文字の装飾。Markdown の一部だけを読む。
-// 読むのは、太字（**…**）、斜体（*…*）、取り消し線（~~…~~）、蛍光ペン（==…==）、コード（`…`）、リンク（[文字](https://…)）、
+// 読むのは、太字（**…**）、斜体（*…*）、取り消し線（~~…~~）、蛍光ペン（==…==）、コード（`…`）、
+// リンク（[文字](https://…) と、ほかのボードへの [文字](anken.board.json)）、
 // 行頭の「- 」「1. 」の箇条書き。
 // 入れ子は読まない。HTML は読まず、書かれた文字のまま出す。
 
@@ -18,11 +19,46 @@ export interface Block {
   lines: Inline[][];
 }
 
-// WHY リンクは http と https だけ: javascript: などの URL を、押せるリンクとして出さないため
+// WHY リンクは http と https とボードだけ: javascript: などの URL を、押せるリンクとして出さないため
+const WEB_REF = /https?:\/\/[^\s)]+/;
+// ほかのボードへのリンク。今のボードのファイルからの相対パスで、.board.json で終わる（anken.board.json、../keiei/keiei.board.json）。
+// WHY 相対パスだけ: ボードの URL にはトークンが要るので、URL をボードに書けない。絶対パスは、フォルダを移すと切れる。
+// 空白と ) を含むパスは書けない
+const BOARD_REF = /(?!\/)[^\s)\\:]+\.board\.json/;
+const BOARD_REF_WHOLE = new RegExp(`^(?:${BOARD_REF.source})$`);
+
 // WHY 太字と斜体の中身は空白で始まらず、空白で終わらない: 「5 * 3 と 2 * 4」のような掛け算の記号を、斜体にしないため
 // 蛍光ペンは ==…== で、色を選ぶなら =={pink}…==。中身は、太字と同じく空白で始まらず、空白で終わらない。
 // 中身が { で始まるものも蛍光ペンにしない（=={red}…== のように知らない色を書いたとき、書いたままの文字で出して気づけるようにする）
-const INLINE = /`([^`\n]+)`|\*\*([^*\s](?:[^*\n]*[^*\s])?)\*\*|\*([^*\s](?:[^*\n]*[^*\s])?)\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|==(?:\{(yellow|green|blue|pink|orange)\})?([^=\s{](?:[^=\n]*[^=\s])?)==|~~([^~\s](?:[^~\n]*[^~\s])?)~~/g;
+const INLINE = new RegExp(
+  [
+    /`([^`\n]+)`/,
+    /\*\*([^*\s](?:[^*\n]*[^*\s])?)\*\*/,
+    /\*([^*\s](?:[^*\n]*[^*\s])?)\*/,
+    new RegExp(`\\[([^\\]\\n]+)\\]\\((${WEB_REF.source}|${BOARD_REF.source})\\)`),
+    /==(?:\{(yellow|green|blue|pink|orange)\})?([^=\s{](?:[^=\n]*[^=\s])?)==/,
+    /~~([^~\s](?:[^~\n]*[^~\s])?)~~/,
+  ]
+    .map((r) => r.source)
+    .join("|"),
+  "g",
+);
+
+/** リンクの行き先が、ほかのボード（相対パス）か */
+export function isBoardRef(href: string): boolean {
+  return BOARD_REF_WHOLE.test(href);
+}
+
+/** ボードへのリンクの行き先を、リンクが書いてあるボードの絶対パス（from）から見た絶対パスにする */
+export function resolveBoardRef(from: string, ref: string): string {
+  const parts = from.split("/").slice(0, -1);
+  for (const seg of ref.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg !== "..") parts.push(seg);
+    else if (parts.length > 1) parts.pop();
+  }
+  return parts.join("/");
+}
 
 function markColor(name: string | undefined): MarkColor {
   return MARK_COLORS.find((c) => c === name) ?? "yellow";

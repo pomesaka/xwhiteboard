@@ -1,7 +1,7 @@
-import { ALIGNS, COLORS, FONT, HEADS, SHAPES, SIZES, TABLE_COL, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
+import { ALIGNS, COLORS, FONT, HEADS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, TABLE_COL, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
 
 import { LABEL_LIFT, arrowPath, labelSpot, routeArrow, type RouteEnd } from "../shared/route.ts";
-import { MARK_COLORS, parseRich, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
+import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
 import { svgSrc } from "./sketch.ts";
 import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, GANTT_ROW_H, GANTT_SCALE_H, GANTT_UNITS, dragBar, formatDay, ganttLayout, parseDay, type GanttBar } from "../shared/gantt.ts";
 import type { EndMark, ShapeKind } from "../shared/model.ts";
@@ -54,8 +54,8 @@ const showComments = params.has("comments");
 type Gesture =
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   // pinId: コメントの印を押して始めたときの、そのコメントの id。動かさずに離したら、やりとりを開く
-  // href: リンクの上で押して始めたときの、その行き先。動かさずに離したら、リンクを開く
-  | { kind: "move"; start: Point; orig: Map<string, El>; moved: boolean; pinId: string | null; href: string | null }
+  // link: リンクの上で押して始めたときの、そのリンク。動かさずに離したら、リンクを開く
+  | { kind: "move"; start: Point; orig: Map<string, El>; moved: boolean; pinId: string | null; link: HTMLAnchorElement | null }
   | { kind: "resize"; start: Point; orig: El; w: number; h: number }
   // purpose: 範囲で選ぶ、セクションを描く、コメントを置く。onId は、コメントの道具で押した場所にあった要素
   | { kind: "marquee"; start: Point; sx: number; sy: number; purpose: "select" | "container" | "comment"; onId: string | null }
@@ -183,6 +183,37 @@ function div(cls: string, text?: string): HTMLDivElement {
   return d;
 }
 
+/** リンクの行き先を付ける。ほかのボードへのリンクは、data-board に相対パスを持たせて見分ける */
+function setLink(a: HTMLAnchorElement, href: string): void {
+  if (isBoardRef(href)) {
+    a.dataset.board = href;
+    a.href = `/?board=${encodeURIComponent(resolveBoardRef(boardPath, href))}`;
+    a.title = `ボードを開く: ${href}`;
+    return;
+  }
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+}
+
+/** リンクを開く。Web のリンクは別のタブで、ほかのボードは同じタブで開く（戻るボタンで元のボードへ戻れる） */
+async function openLink(a: HTMLAnchorElement): Promise<void> {
+  const ref = a.dataset.board;
+  if (ref === undefined) {
+    window.open(a.href, "_blank", "noopener,noreferrer");
+    return;
+  }
+  const query = `board=${encodeURIComponent(resolveBoardRef(boardPath, ref))}`;
+  // 行き先が無いか読めないときは、今のボードにとどまって知らせる
+  const r = await api(`/api/board?${query}`);
+  if (!r.ok) {
+    toast(`ボードを開けない: ${ref}`);
+    return;
+  }
+  // WHY # を付け直す: トークンは URL の # の後ろにあり、リンクの行き先には書いていない
+  location.assign(`/?${query}${location.hash}`);
+}
+
 const INLINE_TAG: Record<"bold" | "italic" | "strike" | "code", string> = { bold: "strong", italic: "em", strike: "s", code: "code" };
 
 function appendInline(target: HTMLElement, line: Inline[]): void {
@@ -200,9 +231,7 @@ function appendInline(target: HTMLElement, line: Inline[]): void {
       }
       case "link": {
         const a = document.createElement("a");
-        a.href = part.href;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
+        setLink(a, part.href);
         a.textContent = part.text;
         target.append(a);
         break;
@@ -376,16 +405,32 @@ function renderEl(el: El): void {
         n.append(shp);
       }
       const body = div("body");
+      // 状態と発言者の札、見出し、本文の順に積む
+      const badge = statusBadge(el);
+      if (badge || el.who) {
+        const meta = div("meta");
+        if (badge) meta.append(div(`st st-${badge.status}`, badge.label));
+        if (el.who) meta.append(div("who", el.who));
+        body.append(meta);
+      }
       if (el.tag) body.append(div("tag", el.tag));
+      if (el.title) body.append(div("ntitle", el.title));
       const txt = div("txt");
       fillRich(txt, el.text ?? "");
       body.append(txt);
       n.append(body);
-      fitText(n, body, txt, el.size ? FONT[el.size] : 15);
+      // 見出しがあるときの本文は、補足として小さく出す
+      fitText(n, body, txt, el.size ? FONT[el.size] : el.title ? NOTE_SUB_FONT : 15);
       break;
     }
     case "container":
       n.append(div("ttl", el.title ?? ""));
+      if (el.question || el.answer) {
+        const head = div("shead");
+        if (el.question) head.append(div("sq", el.question));
+        if (el.answer) head.append(div("sa", el.answer));
+        n.append(head);
+      }
       break;
     case "text":
       {
@@ -435,11 +480,9 @@ function renderEl(el: El): void {
       if (el.href) {
         const a = document.createElement("a");
         a.className = "ilink";
-        a.href = el.href;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
         a.title = el.href;
-        a.textContent = "↗";
+        setLink(a, el.href);
+        a.textContent = isBoardRef(el.href) ? "→" : "↗";
         n.append(a);
       }
       break;
@@ -778,7 +821,24 @@ function positionHandle(): void {
   }
 }
 
+/** いま話している議題のセクションの id。サーバーが持つ一時の表示で、全部の画面で同じになる */
+let focusId: string | null = null;
+
+function setFocus(raw: unknown): void {
+  // 書き出しの画面では、注目を効かせない（議事録の画像が薄くならないように）
+  focusId = typeof raw === "string" && !exporting ? raw : null;
+}
+
+/** 注目しているセクションと中身に印（lit）を付け、ほかを薄くする */
+function applyFocus(): void {
+  const section = focusId === null ? undefined : els.get(focusId);
+  const lit = new Set(section ? [section.id, ...membersOf(els.values(), section).map((m) => m.id)] : []);
+  world.classList.toggle("focusing", section !== undefined);
+  for (const [id, n] of nodes) n.classList.toggle("lit", lit.has(id));
+}
+
 function refresh(): void {
+  applyFocus();
   renderLines();
   positionHandle();
   renderBar();
@@ -904,6 +964,7 @@ function loadSnapshot(raw: unknown): void {
   applyOrder(next.map((e) => e.id));
   setTitle(typeof raw.title === "string" ? raw.title : "");
   renderClaims(raw.claims);
+  setFocus(raw.focus);
   refresh();
   if (!fitted) {
     fitted = true;
@@ -1104,6 +1165,12 @@ function shared<T>(values: T[]): T | null {
   const first = values[0];
   return first !== undefined && values.every((v) => v === first) ? first : null;
 }
+/** セクションの中身の並べ方。0 は、並べない（自由に置く） */
+const COLS_OPTIONS = ["0", "1", "2", "3", "4", "5", "6"] as const;
+const COLS_LABEL: Record<(typeof COLS_OPTIONS)[number], string> = { "0": "自由に置く", "1": "1 列", "2": "2 列", "3": "3 列", "4": "4 列", "5": "5 列", "6": "6 列" };
+/** 付箋の状態の選択。none は、札を出さない */
+const STATUS_OPTIONS = ["none", ...NOTE_STATUS] as const;
+const STATUS_OPTION_LABEL: Record<(typeof STATUS_OPTIONS)[number], string> = { none: "状態なし", ...STATUS_LABEL };
 const HEADS_LABEL: Record<(typeof HEADS)[number], string> = { end: "→", start: "←", both: "↔", none: "―" };
 
 function renderBar(): void {
@@ -1157,6 +1224,8 @@ function renderBar(): void {
     // 形は数が多いので、ボタンを並べずに一覧から選ぶ
     add(
       picker("形", SHAPES, SHAPE_LABEL, shared(shapes.map((e) => e.shape ?? "note")), (v) => patchAll(["shape"], { shape: v })),
+      // 状態を外すときは、持ち越しの日付も消す（日付だけが残ると、持ち越しの札が出続ける）
+      picker("状態", STATUS_OPTIONS, STATUS_OPTION_LABEL, shared(shapes.map((e) => statusBadge(e)?.status ?? "none")), (v) => patchAll(["shape"], v === "none" ? { status: null, carriedFrom: null } : v === "carried" ? { status: v } : { status: v, carriedFrom: null })),
       button("塗りなし", all((e) => e.hollow === true), () => patchAll(["shape"], { hollow: all((e) => e.hollow === true) ? null : true })),
       button("点線", all((e) => e.dashed === true), () => patchAll(["shape"], { dashed: all((e) => e.dashed === true) ? null : true })),
     );
@@ -1181,6 +1250,17 @@ function renderBar(): void {
     add(button("折れ線", elbow, () => patchAll(["arrow"], elbow ? { route: null, bends: null } : { route: "elbow" })));
     // 端ごとの形（startHead・endHead）が書かれていたら消して、ここで選んだ向きに合わせる
     for (const h of HEADS) add(button(HEADS_LABEL[h], sel.length === 1 && (first?.heads ?? "end") === h, () => patchAll(["arrow"], { heads: h, startHead: null, endHead: null })));
+  }
+  if (has("container")) {
+    // 中身の並べ方。列の数を選ぶと、中身を詰めて並べ、セクションの高さを中身に合わせる
+    sep();
+    const now = shared(sel.filter((e) => e.type === "container").map((e) => String(e.cols ?? 0)));
+    if (sel.length === 1 && first?.type === "container") {
+      const on = focusId === first.id;
+      add(button("注目", on, () => void api("/api/focus", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ board: boardPath, id: on ? null : first.id }) }), "このセクションを残して、ほかを薄くする"));
+    }
+    if (sel.length === 1 && first?.type === "container") add(button("論点", false, () => editSectionField(first, "question"), "論点を書く"), button("結論", false, () => editSectionField(first, "answer"), "結論を書く"));
+    add(picker("中身の並べ方", COLS_OPTIONS, COLS_LABEL, COLS_OPTIONS.find((o) => o === now) ?? null, (v) => patchAll(["container"], { cols: v === "0" ? null : Number(v) })));
   }
   if (sel.length === 1 && first?.type === "gantt") {
     sep();
@@ -1219,6 +1299,12 @@ function renderBar(): void {
   add(button("削除", false, () => void removeEls([...selection])));
 }
 
+/** セクションの論点か結論を、人が直す。空にすると消す */
+function editSectionField(el: El, key: "question" | "answer"): void {
+  const v = prompt(key === "question" ? "セクションの論点" : "セクションの結論", el[key] ?? "");
+  if (v !== null) void setOps([{ id: el.id, patch: { [key]: v === "" ? null : v } }]);
+}
+
 /** 選んだ要素を、前面か背面へ動かす */
 function reorder(to: "front" | "back"): void {
   // 背面へ送るときは逆の順に送る。選んだ要素どうしの前後を保つため
@@ -1234,6 +1320,10 @@ function startEdit(id: string, target: EventTarget | null): void {
   if (el.type === "arrow") {
     const v = prompt("矢印のラベル", el.label ?? "");
     if (v !== null) void setOps([{ id, patch: { label: v === "" ? null : v } }]);
+    return;
+  }
+  if (el.type === "container" && target instanceof Element && target.closest(".sq, .sa")) {
+    editSectionField(el, target.closest(".sq") ? "question" : "answer");
     return;
   }
   if (el.type === "gantt") {
@@ -1254,16 +1344,29 @@ function startEdit(id: string, target: EventTarget | null): void {
   if (!n) return;
   let field: Element | null = null;
   let single = false;
+  // 装飾の記号が効かない欄（セクションの題名、付箋の見出し）
+  let plain = el.type === "container";
   // 直す前の、書かれたままの文字。画面には装飾した結果が出ているので、欄にはこれを入れ直す
   let raw: string;
   let save: (value: string) => Record<string, unknown>;
   switch (el.type) {
     case "shape":
-    case "text":
+    case "text": {
+      // 付箋の見出しの上で始めたら、見出しを直す。空にすると、見出しを消す
+      const heading = target instanceof Element ? target.closest(".ntitle") : null;
+      if (heading) {
+        field = heading;
+        single = true;
+        plain = true;
+        raw = el.title ?? "";
+        save = (t) => ({ title: t === "" ? null : t });
+        break;
+      }
       field = n.querySelector(".txt");
       raw = el.text ?? "";
       save = (text) => ({ text });
       break;
+    }
     case "container":
       field = n.querySelector(".ttl");
       single = true;
@@ -1287,7 +1390,7 @@ function startEdit(id: string, target: EventTarget | null): void {
   }
   if (!(field instanceof HTMLElement)) return;
   field.textContent = raw;
-  editing = { id, field, before: raw, single, rich: el.type !== "container", save };
+  editing = { id, field, before: raw, single, rich: !plain, save };
   renderBar();
   field.contentEditable = "plaintext-only";
   field.focus();
@@ -1473,7 +1576,7 @@ stage.addEventListener("pointerdown", (ev) => {
       if (ev.shiftKey) select(selection.has(id) ? [...selection].filter((x) => x !== id) : [...selection, id]);
       else if (!selection.has(id)) select([id]);
       const link = ev.target instanceof Element ? ev.target.closest("a[href]") : null;
-      gesture = { kind: "move", start: p, orig: movingSet(), moved: false, pinId, href: link instanceof HTMLAnchorElement ? link.href : null };
+      gesture = { kind: "move", start: p, orig: movingSet(), moved: false, pinId, link: link instanceof HTMLAnchorElement ? link : null };
     } else {
       if (!ev.shiftKey) select([]);
       gesture = { kind: "marquee", start: p, sx, sy, purpose: "select", onId: null };
@@ -1583,7 +1686,7 @@ function endGesture(ev: PointerEvent): void {
       if (!g.moved) {
         // コメントの印を、動かさずに離した。やりとりを開く（開いていれば閉じる）
         // WHY ここで開く: 押している間はポインターを stage が受け取るので、リンクそのもののクリックは起きない
-        if (g.href) window.open(g.href, "_blank", "noopener,noreferrer");
+        if (g.link) void openLink(g.link);
         if (g.pinId && openComment === g.pinId) closeComment();
         else if (g.pinId) openCommentPanel(g.pinId);
         break;
@@ -1849,6 +1952,11 @@ async function boot(): Promise<void> {
   es.addEventListener("error", () => showConnected(false));
   es.addEventListener("snapshot", (ev) => loadSnapshot(JSON.parse(ev.data)));
   es.addEventListener("claims", (ev) => renderClaims(JSON.parse(ev.data)));
+  es.addEventListener("focus", (ev) => {
+    const msg: unknown = JSON.parse(ev.data);
+    setFocus(isRecord(msg) ? msg.id : null);
+    refresh();
+  });
   es.addEventListener("ops", (ev) => {
     const msg: unknown = JSON.parse(ev.data);
     if (!isRecord(msg)) return;

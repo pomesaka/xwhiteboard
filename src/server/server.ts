@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
 import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
 import { checkBoard } from "../shared/check.ts";
+import { resolveBoardRef } from "../shared/rich.ts";
 import { shoot } from "./shot.ts";
 import { loadToken, sameToken } from "./token.ts";
 
@@ -31,6 +32,9 @@ interface Board {
   mtime: number;
   clients: Set<Client>;
   claims: Map<string, Claim>;
+  /** いま話している議題のセクションの id。画面は、そのセクションと中身を残して、ほかを薄くする。
+   * WHY ファイルに書かない: 会議の進行に合わせた一時の表示で、ボードの中身ではない（書き込み中の枠と同じ扱い） */
+  focus: string | null;
 }
 
 class HttpError extends Error {
@@ -107,6 +111,7 @@ function snapshot(board: Board): unknown {
     title: board.doc.title,
     elements: board.doc.elements,
     claims: [...board.claims.values()],
+    focus: board.focus,
   };
 }
 
@@ -139,7 +144,7 @@ function getBoard(path: string): Board {
     return known;
   }
   if (!existsSync(path)) throw new HttpError(404, `ボードが無い: ${path}（xwb open で作る）`);
-  const board: Board = { path, ...readDoc(path), clients: new Set(), claims: new Map() };
+  const board: Board = { path, ...readDoc(path), clients: new Set(), claims: new Map(), focus: null };
   boards.set(path, board);
   return board;
 }
@@ -233,6 +238,11 @@ export async function startServer(port: number): Promise<void> {
       ...(applied.titleChanged ? { title: board.doc.title } : {}),
       ...(applied.order ? { order: applied.order } : {}),
     });
+    // 注目しているセクションが消えたら、注目をやめる（ほかが薄いまま残らないように）
+    if (board.focus !== null && applied.removed.some((e) => e.id === board.focus)) {
+      board.focus = null;
+      broadcast(board, "focus", { id: null });
+    }
     return applied;
   };
 
@@ -305,8 +315,10 @@ export async function startServer(port: number): Promise<void> {
         commitOps(board, [{ op: "set", id, patch: { unsent: null } }], client);
         return json({ sessions: targets.length });
       }
-      case "GET /api/check":
-        return json({ issues: checkBoard(getBoard(boardPath(q.get("board"))).doc) });
+      case "GET /api/check": {
+        const board = getBoard(boardPath(q.get("board")));
+        return json({ issues: checkBoard(board.doc, { boardExists: (ref) => existsSync(resolveBoardRef(board.path, ref)) }) });
+      }
       case "GET /api/changes":
         // 人がブラウザで変えて、まだ読み終えたことにしていない要素。読むだけでは消さない（議事録を書き直すときに読み直せるように）
         return json({ changes: pendingChanges(getBoard(boardPath(q.get("board"))).doc) });
@@ -346,6 +358,21 @@ export async function startServer(port: number): Promise<void> {
         });
         broadcast(board, "claims", [...board.claims.values()]);
         return json({ id });
+      }
+      case "POST /api/focus": {
+        const b = await body(req);
+        const board = getBoard(boardPath(b.board));
+        // id を書かなければ、注目をやめる
+        if (b.id !== undefined && b.id !== null) {
+          const el = board.doc.elements.find((e) => e.id === b.id);
+          if (!el) throw new HttpError(422, `id ${JSON.stringify(b.id)} の要素が無い`);
+          if (el.type !== "container") throw new HttpError(422, `注目できるのはセクションだけ。${el.id} は ${el.type}`);
+          board.focus = el.id;
+        } else {
+          board.focus = null;
+        }
+        broadcast(board, "focus", { id: board.focus });
+        return json({ focus: board.focus });
       }
       case "POST /api/unclaim": {
         const b = await body(req);

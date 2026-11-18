@@ -67,6 +67,12 @@
   --board-chip: rgba(43, 42, 40, 0.82);
   --board-note-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 6px 12px -6px rgba(60, 50, 20, 0.35);
 
+  /* 付箋の状態の札。白い文字を載せるので、付箋の濃い色（ink）を面にする */
+  --status-decided: var(--note-green-ink);
+  --status-open: var(--note-orange-ink);
+  --status-carried: var(--note-purple-ink);
+  --status-priority: var(--note-red-ink);
+
   /* ガント */
   --gantt-mark: var(--destructive);
   --gantt-today: var(--board-link);
@@ -86,6 +92,7 @@
   --board-text-xl: 40px;
   --board-text-huge: 96px;
   --board-text-section: 15px;
+  --board-text-question: 18px;
   --board-text-tag: 10.5px;
   --board-text-table: 13px;
   --board-text-label: 12px;

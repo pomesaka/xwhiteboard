@@ -107,6 +107,48 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 付箋の欄。上から、状態と発言者の札、見出し、本文 */
+.shape .meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 5px;
+  font-size: var(--board-text-tag);
+  font-weight: 700;
+  line-height: 1.5;
+}
+.shape .meta > * {
+  padding: 0 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* 状態の札は、付箋の色に関わらず同じ色で出す（色で状態を見分けられるように） */
+.shape .st {
+  background: var(--st);
+  color: var(--board-on-dark);
+}
+.st-decided { --st: var(--status-decided); }
+.st-open { --st: var(--status-open); }
+.st-carried { --st: var(--status-carried); }
+.st-priority { --st: var(--status-priority); }
+.shape .who {
+  margin-left: auto;
+  background: var(--board-surface);
+  color: var(--board-text-muted);
+  box-shadow: inset 0 0 0 1px var(--board-line);
+}
+.shape .ntitle {
+  font-size: var(--board-text-section);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  margin-bottom: 2px;
+}
+/* 見出しだけで本文が無い付箋では、本文の空の行を出さない（編集中は出す） */
+.shape .ntitle + .txt:empty:not([contenteditable]) {
+  display: none;
+}
 .shape.c-ink .tag {
   color: var(--board-on-dark-muted);
 }
@@ -247,6 +289,47 @@
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: grab;
+}
+/* 注目。話している議題のセクションと中身（lit）を残して、ほかを薄くする。矢印と手書きの線は、まとめて薄くする */
+.focusing .el:not(.lit),
+.focusing #lines {
+  opacity: 0.28;
+  transition: opacity 0.2s;
+}
+.focusing .container.lit {
+  box-shadow: 0 0 0 3px var(--selected-border);
+}
+
+/* 論点と結論。題名の下に積む。高さは、model.ts の sectionTop の見積もりと合わせてある */
+.container .shead {
+  pointer-events: auto;
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 48px;
+  color: var(--foreground);
+  font-weight: 700;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.container .sq {
+  font-size: var(--board-text-question);
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+.container .sa {
+  font-size: var(--board-text-section);
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--board-surface);
+  box-shadow: inset 0 0 0 1.5px var(--el-bd);
+  display: flex;
+  gap: 0.5em;
+}
+.container .sa::before {
+  content: "→";
+  color: var(--el-ink);
 }
 .container.c-white .ttl,
 .container.c-gray .ttl {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyOps, commentPayload, emptyDoc, parseDoc, parseEl, pendingChanges, serialize, trackHuman, type Doc } from "../src/shared/model.ts";
+import { applyOps, sectionTop, statusBadge, commentPayload, emptyDoc, parseDoc, parseEl, pendingChanges, serialize, trackHuman, type Doc } from "../src/shared/model.ts";
 
 function build(ops: unknown[], base: Doc = emptyDoc("t")): Doc {
   const r = applyOps(base, ops);
@@ -19,6 +19,8 @@ describe("parseEl は、形に合わない要素を理由を付けて断る", ()
     ["画像に src も svg も無い", { id: "a", type: "image", x: 0, y: 0, w: 1, h: 1 }, "src か svg"],
     ["画像の src が上のフォルダを指す", { id: "a", type: "image", x: 0, y: 0, w: 1, h: 1, src: "../x.png" }, "src は"],
     ["画像の src が絶対パス", { id: "a", type: "image", x: 0, y: 0, w: 1, h: 1, src: "/etc/x.png" }, "src は"],
+    ["画像の href が http でもボードでもない", { id: "a", type: "image", x: 0, y: 0, w: 1, h: 1, src: "x.png", href: "javascript:alert(1)" }, "href は"],
+    ["画像の href が絶対パスのボード", { id: "a", type: "image", x: 0, y: 0, w: 1, h: 1, src: "x.png", href: "/m/a.board.json" }, "href は"],
     ["大きさが 0", { id: "a", type: "shape", x: 0, y: 0, w: 0, h: 1 }, "w は正の数値"],
     ["線の点が 1 つ", { id: "a", type: "stroke", points: [[0, 0]] }, "points は"],
   ])("%s", (_name, raw, message) => {
@@ -348,4 +350,88 @@ test("ファイルは 1 要素 1 行で書かれ、読み直すと同じボー�
   const text = serialize(doc);
   expect(text.split("\n").filter((l) => l.startsWith("    {"))).toHaveLength(2);
   expect(parseDoc(text)).toEqual({ ok: true, value: doc });
+});
+
+describe("cols を書いたセクションは、中身を列に詰めて並べ、高さを中身に合わせる", () => {
+  const section = { op: "add", el: { id: "s", type: "container", x: 100, y: 100, w: 504, h: 160, cols: 2 } };
+  const note = (id: string, extra: Record<string, unknown> = {}) => ({ op: "add", in: "s", el: { id, type: "shape", ...extra } });
+  const abc = [section, note("a"), note("b"), note("c")];
+  const at = (x: number, y: number, extra: Record<string, unknown> = {}) => ({ x, y, w: 220, ...extra });
+
+  test.each([
+    ["中身が無ければ、題名の帯だけに畳む", [section], { s: { h: 52 } }],
+    ["in で足すと、左上から列に入り、行が増えるとセクションが伸びる", abc, { a: at(124, 152), b: at(360, 152), c: at(124, 278), s: { h: 312 } }],
+    ["消すと詰め直して、セクションが縮む", [...abc, { op: "rm", id: "a" }], { b: at(124, 152), c: at(360, 152), s: { h: 186 } }],
+    ["行の高さは、その行でいちばん背の高いものに合わせる", [section, note("a", { h: 200 }), note("b"), note("c")], { c: at(124, 368), s: { h: 402 } }],
+    ["座標で置いたものも、中心がセクションの中なら並べる", [section, note("a"), { op: "add", el: { id: "z", type: "shape", x: 400, y: 160, w: 90, h: 60 } }], { a: at(124, 152), z: at(360, 152, { h: 60 }) }],
+    ["動かして前に置くと、その順に並べ直す", [...abc, { op: "set", id: "c", patch: { x: 110, y: 140 } }], { c: at(124, 152), a: at(360, 152), b: at(124, 278) }],
+    ["セクションの外へ出すと、残りを詰める", [...abc, { op: "set", id: "a", patch: { x: 900, y: 900 } }], { a: { x: 900, y: 900 }, b: at(124, 152), c: at(360, 152) }],
+    ["セクションの幅を変えると、列の幅が変わる", [...abc, { op: "set", id: "s", patch: { w: 704 } }], { a: { x: 124, w: 320 }, b: { x: 460, w: 320 } }],
+    ["列の数を変えると、並べ直す", [...abc, { op: "set", id: "s", patch: { cols: 1 } }], { a: { x: 124, y: 152, w: 456 }, b: { x: 124, y: 278 }, c: { x: 124, y: 404 }, s: { h: 438 } }],
+    ["後から cols を書いても並べる", [{ op: "add", el: { id: "s", type: "container", x: 100, y: 100, w: 504, h: 400 } }, { op: "add", el: { id: "p", type: "shape", x: 300, y: 300, w: 100, h: 50 } }, { op: "set", id: "s", patch: { cols: 2 } }], { p: at(124, 152, { h: 50 }), s: { h: 126 } }],
+    ["伸びたぶん、下のものを押し下げる", [section, { op: "add", el: { id: "u", type: "shape", x: 100, y: 300, w: 100, h: 50 } }, note("a"), note("b"), note("c")], { s: { h: 312 }, u: { y: 472 } }],
+    ["要素を指すコメントは、並べ直しに付いていく", [...abc, { op: "add", el: { id: "k", type: "comment", x: 130, y: 290, on: "c" } }, { op: "rm", id: "a" }], { c: at(360, 152), k: { x: 366, y: 164 } }],
+  ])("%s", (_name, ops, expected) => {
+    const doc = build(ops);
+    for (const [id, want] of Object.entries(expected)) expect(find(doc, id)).toMatchObject(want);
+  });
+
+  test("並べ終わったボードに、関係のない操作をしても中身は動かない", () => {
+    const doc = build(abc);
+    const r = applyOps(doc, [{ op: "title", title: "x" }]);
+    expect(r.ok && r.value.updated).toEqual([]);
+  });
+
+  test.each([
+    ["0", 0],
+    ["小数", 1.5],
+    ["上限より大きい", 9],
+  ])("cols が %s なら断る", (_name, cols) => {
+    const r = parseEl({ id: "s", type: "container", x: 0, y: 0, w: 100, h: 100, cols });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("付箋の欄（title・who・status・carriedFrom）", () => {
+  const note = (extra: Record<string, unknown>) => ({ id: "a", type: "shape", x: 0, y: 0, w: 220, h: 110, ...extra });
+  test.each([
+    ["知らない状態", note({ status: "done" }), "status は"],
+    ["日付でない carriedFrom", note({ carriedFrom: "11/11" }), "carriedFrom は"],
+    ["持ち越しでない状態に carriedFrom", note({ status: "decided", carriedFrom: "2026-11-11" }), "carriedFrom を書くなら"],
+    ["文字（text）には書けない", { id: "a", type: "text", x: 0, y: 0, text: "x", status: "open" }, "text に status は無い"],
+  ])("%s は断る", (_name, raw, message) => {
+    const r = parseEl(raw);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain(message);
+  });
+
+  test.each([
+    ["状態だけ", note({ status: "decided" }), { status: "decided", label: "決定" }],
+    ["持ち越しと日付", note({ status: "carried", carriedFrom: "2026-11-11" }), { status: "carried", label: "持ち越し · 11/11 から" }],
+    ["日付だけを書くと、持ち越し", note({ carriedFrom: "2026-11-04" }), { status: "carried", label: "持ち越し · 11/4 から" }],
+    ["月までの日付", note({ carriedFrom: "2026-10" }), { status: "carried", label: "持ち越し · 10月から" }],
+    ["どちらも無ければ、札は無い", note({ who: "竹内" }), null],
+  ])("札の文字: %s", (_name, raw, expected) => {
+    const r = parseEl(raw);
+    expect<unknown>(r.ok && statusBadge(r.value)).toEqual(expected);
+  });
+});
+
+describe("セクションの中身を置き始める高さ", () => {
+  test.each([
+    ["題名だけ", {}, 52],
+    ["論点 1 行", { question: "来期の採用は何人か" }, 52 + 26 + 8],
+    ["論点と結論", { question: "来期の採用は何人か", answer: "2 人" }, 52 + 26 + 8 + 23 + 20],
+    ["論点が折り返す", { w: 200, question: "来期の採用は何人にするか" }, 52 + 51 + 8],
+  ])("%s", (_name, extra, expected) => {
+    expect(sectionTop({ id: "s", type: "container", x: 0, y: 0, w: 504, h: 100, ...extra })).toBe(expected);
+  });
+
+  test("in で足した付箋は、論点と結論の下に入る", () => {
+    const doc = build([
+      { op: "add", el: { id: "s", type: "container", x: 0, y: 0, w: 504, h: 300, question: "来期の採用は何人か" } },
+      { op: "add", in: "s", el: { id: "a", type: "shape" } },
+    ]);
+    expect(find(doc, "a")).toMatchObject({ x: 24, y: 86 });
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkBoard } from "../src/shared/check.ts";
+import { checkBoard, type CheckContext } from "../src/shared/check.ts";
 import { applyOps, emptyDoc } from "../src/shared/model.ts";
 
 const add = (el: Record<string, unknown>) => ({ op: "add", el });
@@ -22,6 +22,7 @@ describe("問題の無い置き方では、何も返さない", () => {
     ["セクションの中を通る矢印（セクションは箱に数えない）", [section("s", 250, -100, 100, 300), box("a", 0, 0), box("b", 400, 0), add({ id: "ab", type: "arrow", from: "a", to: "b" })]],
     ["コメントは、中身に重ねてよい", [box("a", 0, 0), add({ id: "c", type: "comment", x: -10, y: -10, w: 300, h: 200 })]],
     ["文字が収まる箱", [box("a", 0, 0, { text: "短い文" })]],
+    ["列で並べるセクションに、順に足した付箋", [add({ id: "s", type: "container", x: 0, y: 0, w: 736, cols: 3 }), ...["a", "b", "c", "d"].map((id) => ({ op: "add", in: "s", el: { id, type: "shape", text: "付箋" } }))]],
     ["名前が欄に入り、印の名前が重ならずに段へ分かれるガント", [add({ id: "g", type: "gantt", x: 0, y: 0, w: 456, start: "2026-12", end: "2027-11", bars: [{ name: "会議参加と調査", start: "2026-12", end: "2026-12" }], marks: [{ name: "動作確認 1 回め", date: "2026-12" }, { name: "動作確認 2 回め", date: "2027-01" }] })]],
   ])("%s", (_name, ops) => {
     expect(check(ops)).toEqual([]);
@@ -118,4 +119,72 @@ test("どれくらいかを数で返す（重なりの幅と高さ、はみ出�
     { kind: "outside-section", ids: ["a", "s"], w: undefined, h: undefined, px: 76 },
     { kind: "small-text", ids: ["d"], w: undefined, h: undefined, px: 10 },
   ]);
+});
+
+describe("列で並べるセクションの、列の幅", () => {
+  test.each([
+    ["列が狭い", { w: 504, cols: 4 }, ["narrow-column:s"]],
+    ["列が足りている", { w: 504, cols: 3 }, []],
+    ["cols が無いセクションは見ない", { w: 100 }, []],
+  ])("%s", (_name, extra, expected) => {
+    expect(check([add({ id: "s", type: "container", x: 0, y: 0, h: 160, ...extra })])).toEqual(expected);
+  });
+});
+
+describe("ほかのボードへのリンクの行き先", () => {
+  const exists = (ref: string): boolean => ref === "ある.board.json";
+  const run = (el: Record<string, unknown>, ctx: CheckContext = { boardExists: exists }): string[] => {
+    const r = applyOps(emptyDoc("t"), [add(el)]);
+    if (!r.ok) throw new Error(r.error);
+    return checkBoard(r.value.doc, ctx).map((i) => `${i.kind}:${i.ids.join(",")}`);
+  };
+  test.each([
+    ["付箋の文字のリンクの行き先が無い", { id: "a", type: "shape", text: "[x](無い.board.json)" }, ["dead-link:a"]],
+    ["行き先がある", { id: "a", type: "shape", text: "[x](ある.board.json)" }, []],
+    ["表のセルのリンク", { id: "t", type: "table", rows: [["[x](無い.board.json)"]] }, ["dead-link:t"]],
+    ["画像の href", { id: "i", type: "image", svg: "<svg/>", href: "無い.board.json" }, ["dead-link:i"]],
+    ["Web のリンクは見ない", { id: "a", type: "shape", text: "[x](https://example.com/無い.board.json)" }, []],
+  ])("%s", (_name, el, expected) => {
+    expect(run(el)).toEqual(expected);
+  });
+
+  test("ファイルを確かめる手段を渡さなければ、リンクは見ない", () => {
+    expect(run({ id: "a", type: "shape", text: "[x](無い.board.json)" }, {})).toEqual([]);
+  });
+});
+
+describe("付箋の欄", () => {
+  const note = (extra: Record<string, unknown>) => [add({ id: "a", type: "shape", x: 0, y: 0, w: 220, h: 110, ...extra })];
+  test.each([
+    ["欄に書いた付箋は、何も返さない", note({ title: "見積もりを出す", text: "来週の定例まで", who: "竹内", carriedFrom: "2026-11-11" }), []],
+    ["1 行めの太字は、見出しに書く", note({ text: "**見積もりを出す**\n来週の定例まで" }), ["handwritten-field:a"]],
+    ["太字だけの 1 行は、見出しにしなくてよい", note({ text: "**見積もりを出す**" }), []],
+    ["本文の持ち越しの日付", note({ text: "見積もり · 11/11 から" }), ["handwritten-field:a"]],
+    ["札の状態", note({ tag: "決定 · 竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
+    ["status があれば、札は見ない", note({ tag: "決定事項", status: "decided", text: "見積もり" }), []],
+    ["見出しが 1 行に入らない", note({ title: "見積もりを来週の定例までに出して確認を取る", text: "補足" }), ["long-title:a"]],
+    ["札と見出しのぶん、本文が入らなくなる", note({ h: 70, status: "open", title: "見積もり", text: "補足の文が三行くらいになる長さで書いてあって、この高さには入らない。もう少し続く。まだ続く" }), ["text-overflow:a"]],
+    ["同じ本文でも、札と見出しが無ければ入る", note({ h: 70, text: "補足の文が三行" }), []],
+  ])("%s", (_name, ops, expected) => {
+    expect(check(ops)).toEqual(expected);
+  });
+
+  test("持ち越しの日付を carriedFrom に書けば、同じ日付の繰り返しにならない", () => {
+    const ops = ["a", "b", "c"].map((id, i) => add({ id, type: "shape", x: i * 300, y: 0, text: `件 ${id}`, carriedFrom: "2026-11-11" }));
+    expect(check(ops)).toEqual([]);
+  });
+});
+
+describe("セクションの論点と結論", () => {
+  const sec = (extra: Record<string, unknown>) => add({ id: "s", type: "container", x: 0, y: 0, w: 504, cols: 2, ...extra });
+  const note = { op: "add", in: "s", el: { id: "a", type: "shape", text: "付箋" } };
+  test.each([
+    ["論点があって結論が無い", [sec({ question: "来期の採用は何人か" })], ["open-question:s"]],
+    ["結論がある", [sec({ question: "来期の採用は何人か", answer: "2 人。4 月入社" })], []],
+    ["論点が無いセクションは見ない", [sec({})], []],
+    ["列で並べる中身は、論点と結論の下から始まる", [sec({ question: "来期の採用は何人か", answer: "2 人" }), note], []],
+    ["自由に置くセクションで、中身が論点にかかる", [add({ id: "s", type: "container", x: 0, y: 0, w: 504, h: 300, question: "来期の採用は何人か", answer: "2 人" }), box("a", 24, 52)], ["cramped:a,s"]],
+  ])("%s", (_name, ops, expected) => {
+    expect(check(ops)).toEqual(expected);
+  });
 });

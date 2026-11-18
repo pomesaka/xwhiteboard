@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseInline, parseRich, plainText, toggleMarkup, type MarkupKind } from "../src/shared/rich.ts";
+import { isBoardRef, parseInline, resolveBoardRef, parseRich, plainText, toggleMarkup, type MarkupKind } from "../src/shared/rich.ts";
 
 describe("行の中の装飾を読む", () => {
   test.each([
@@ -14,8 +14,29 @@ describe("行の中の装飾を読む", () => {
     ["空白にはさまれた * は掛け算の記号。斜体にしない", "5 * 3 と 2 * 4", [{ kind: "text", text: "5 * 3 と 2 * 4" }]],
     ["http と https でないリンクは、文字のまま", "[x](javascript:alert(1))", [{ kind: "text", text: "[x](javascript:alert(1))" }]],
     ["HTML は、文字のまま", "<b>太字</b>", [{ kind: "text", text: "<b>太字</b>" }]],
+    ["ほかのボードへのリンク", "詳細は[案件](anken.board.json)", [{ kind: "text", text: "詳細は" }, { kind: "link", text: "案件", href: "anken.board.json" }]],
+    ["上のフォルダのボードへのリンク", "[経営](../keiei/keiei.board.json)", [{ kind: "link", text: "経営", href: "../keiei/keiei.board.json" }]],
+    ["ボードでないファイルへの相対パスは、文字のまま", "[メモ](memo.md)", [{ kind: "text", text: "[メモ](memo.md)" }]],
+    ["絶対パスのボードは、文字のまま", "[x](/tmp/a.board.json)", [{ kind: "text", text: "[x](/tmp/a.board.json)" }]],
   ])("%s", (_name, line, expected) => {
     expect<unknown>(parseInline(line)).toEqual(expected);
+  });
+});
+
+describe("ボードへのリンクの行き先", () => {
+  test.each([
+    ["同じフォルダ", "anken.board.json", true, "/m/keiei/anken.board.json"],
+    ["下のフォルダ", "sub/a.board.json", true, "/m/keiei/sub/a.board.json"],
+    ["上のフォルダ", "../b.board.json", true, "/m/b.board.json"],
+    ["./ で始まる", "./anken.board.json", true, "/m/keiei/anken.board.json"],
+    ["ルートより上へは出ない", "../../../c.board.json", true, "/c.board.json"],
+    ["絶対パスは断る", "/m/a.board.json", false, null],
+    ["URL は断る", "https://example.com/a.board.json", false, null],
+    ["ボードでないファイルは断る", "a.json", false, null],
+    ["空白を含むパスは断る", "a b.board.json", false, null],
+  ])("%s", (_name, ref, valid, resolved) => {
+    expect(isBoardRef(ref)).toBe(valid);
+    if (resolved !== null) expect(resolveBoardRef("/m/keiei/keiei.board.json", ref)).toBe(resolved);
   });
 });
 

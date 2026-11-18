@@ -1,7 +1,8 @@
 // ボードのデータの形と、操作（add・set・rm・title）の適用。
 // サーバー、CLI、ブラウザ、変換が同じ規則で要素を検証できるよう、ここだけに置く。
 import { GANTT_STATUS, GANTT_UNITS, ganttLayout, parseDay, type GanttBar, type GanttMark, type GanttSegment, type GanttUnit } from "./gantt.ts";
-import { plainText } from "./rich.ts";
+import { isBoardRef, plainText } from "./rich.ts";
+import { expandTemplate } from "./template.ts";
 import { SIDES, type Side } from "./route.ts";
 
 export const TYPES = ["shape", "container", "text", "arrow", "table", "image", "stroke", "comment", "gantt"] as const;
@@ -12,6 +13,10 @@ export const SIZES = ["s", "m", "l", "xl", "huge"] as const;
 export const ALIGNS = ["left", "center", "right"] as const;
 export const HEADS = ["end", "start", "both", "none"] as const;
 export const ROUTES = ["straight", "elbow"] as const;
+/** 付箋の状態。決定、未決、持ち越し、優先 */
+export const NOTE_STATUS = ["decided", "open", "carried", "priority"] as const;
+export type NoteStatus = (typeof NOTE_STATUS)[number];
+export const STATUS_LABEL: Record<NoteStatus, string> = { decided: "決定", open: "未決", carried: "持ち越し", priority: "優先" };
 /** 矢印の端の形。矢じり、丸、無し */
 export const END_MARKS = ["arrow", "dot", "none"] as const;
 export type EndMark = (typeof END_MARKS)[number];
@@ -72,7 +77,7 @@ export interface El {
   src?: string;
   /** 画像の切り抜き。zoom は拡大率（1 以上）、x・y は見せたい場所（画像の左上が 0,0、右下が 1,1） */
   crop?: { zoom: number; x: number; y: number };
-  /** 画像を押したときに開くリンク。http と https だけ */
+  /** 画像を押したときに開くリンク。http と https の URL か、ほかのボードへの相対パス */
   href?: string;
   svg?: string;
   points?: Point[];
@@ -94,6 +99,18 @@ export interface El {
   labelW?: number;
   /** ガントに「今日」の線を引く日付 */
   today?: string;
+  /** セクションの論点。枠の上部に大きく出す */
+  question?: string;
+  /** セクションの結論。論点の下に、帯で出す */
+  answer?: string;
+  /** 付箋と図形の、発言者の札 */
+  who?: string;
+  /** 付箋と図形の状態の札。carriedFrom だけを書いたときは、持ち越しとして出す */
+  status?: NoteStatus;
+  /** 持ち越しの元の会議の日付。札に「11/11 から」と出す。本文に日付を書かないので、同じ日付の繰り返しの検査にかからない */
+  carriedFrom?: string;
+  /** セクションの中身を、この列の数で詰めて並べる。書くと、中身の位置と幅、セクションの高さを xwb が決める */
+  cols?: number;
 }
 
 /** 人がブラウザで変えて、まだ Claude に送っていない要素。before は、前に送った時点の要素 */
@@ -125,6 +142,9 @@ const ok = <T>(value: T): Res<T> => ({ ok: true, value });
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
 
 export const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+/** 見出し（title）がある付箋の、本文の文字の大きさ。見出しは 15px の太字 */
+export const NOTE_SUB_FONT = 13;
+export const NOTE_TITLE_FONT = 15;
 export const FONT: Record<Size, number> = { s: 12, m: 16, l: 24, xl: 40, huge: 96 };
 
 /** セクションの中の余白と、題名の帯の高さ。自動配置とブラウザの見た目で同じ値を使う */
@@ -135,8 +155,8 @@ export const GAP = 16;
 export const OUTER_GAP = 60;
 
 const FIELDS: Record<ElType, readonly string[]> = {
-  shape: ["x", "y", "w", "h", "text", "tag", "color", "shape", "size", "align", "border", "hollow", "dashed"],
-  container: ["x", "y", "w", "h", "title", "color"],
+  shape: ["x", "y", "w", "h", "text", "title", "who", "status", "carriedFrom", "tag", "color", "shape", "size", "align", "border", "hollow", "dashed"],
+  container: ["x", "y", "w", "h", "title", "question", "answer", "color", "cols"],
   text: ["x", "y", "w", "text", "size", "align", "color"],
   arrow: ["from", "to", "label", "dashed", "heads", "color", "route", "fromSide", "toSide", "bends", "startHead", "endHead"],
   table: ["x", "y", "w", "head", "rows"],
@@ -165,6 +185,9 @@ const DEFAULT_SIZE: Partial<Record<ElType, { w: number; h: number }>> = {
   container: { w: 504, h: 160 },
   image: { w: 320, h: 240 },
 };
+
+/** セクションの中身を並べる列の数の上限 */
+export const MAX_COLS = 8;
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 
@@ -224,13 +247,28 @@ export function parseEl(raw: unknown): Res<El> {
       case "tag":
       case "title":
       case "label":
+      case "who":
+      case "question":
+      case "answer":
       case "svg":
         if (typeof v !== "string") return fail(`${k} は文字列`);
         el[k] = v;
         break;
       case "href":
-        if (typeof v !== "string" || !/^https?:\/\/\S+$/.test(v)) return fail("href は http:// か https:// で始まる URL");
+        if (typeof v !== "string" || !(/^https?:\/\/\S+$/.test(v) || isBoardRef(v))) return fail("href は http:// か https:// で始まる URL か、ほかのボードへの相対パス（.board.json で終わる）");
         el.href = v;
+        break;
+      case "status":
+        if (!isOneOf(NOTE_STATUS, v)) return fail(`status は ${NOTE_STATUS.join(" | ")} のどれか`);
+        el.status = v;
+        break;
+      case "carriedFrom":
+        if (typeof v !== "string" || parseDay(v, false) === null) return fail("carriedFrom は YYYY-MM-DD か YYYY-MM の日付");
+        el.carriedFrom = v;
+        break;
+      case "cols":
+        if (!isNum(v) || !Number.isInteger(v) || v < 1 || v > MAX_COLS) return fail(`cols は 1〜${MAX_COLS} の整数`);
+        el.cols = v;
         break;
       case "crop": {
         if (!isRecord(v) || !isNum(v.zoom) || !isNum(v.x) || !isNum(v.y)) return fail("crop は { zoom, x, y }");
@@ -401,8 +439,35 @@ export function parseEl(raw: unknown): Res<El> {
   for (const k of REQUIRED[type]) {
     if (raw[k] === undefined) return fail(`${type} には ${k} が要る`);
   }
+  if (el.carriedFrom !== undefined && el.status !== undefined && el.status !== "carried") return fail("carriedFrom を書くなら、status は carried か、書かない");
   if (type === "image" && (el.src === undefined) === (el.svg === undefined)) return fail("image には src か svg のどちらか 1 つを書く");
   return ok(el);
+}
+
+/** 付箋の状態の札に出す文字。状態が無ければ null。持ち越しには、元の日付を付ける（「持ち越し · 11/11 から」） */
+export function statusBadge(el: El): { status: NoteStatus; label: string } | null {
+  const status = el.status ?? (el.carriedFrom === undefined ? undefined : "carried");
+  if (status === undefined) return null;
+  const [, month, day] = (el.carriedFrom ?? "").split("-").map(Number);
+  const from = month === undefined ? "" : day === undefined ? ` · ${month}月から` : ` · ${month}/${day} から`;
+  return { status, label: STATUS_LABEL[status] + from };
+}
+
+/** セクションの論点と結論の文字の大きさ。画面の CSS（.container .sq と .sa）と同じ値 */
+export const SECTION_Q_FONT = 18;
+export const SECTION_A_FONT = 15;
+
+/**
+ * セクションの上の端から、中身を置き始める場所までの高さ。題名の帯に、論点と結論のぶんを足す。
+ * 文字の高さは見積もり（折り返しの行の数 × 行の高さ）。
+ */
+export function sectionTop(c: El): number {
+  const inner = Math.max(SECTION_Q_FONT, (c.w ?? 0) - PAD * 2);
+  const lines = (text: string, px: number, width: number): number => text.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(textWidth(l, px) / width)), 0);
+  // 論点は行の高さ 1.4 と下の間 8。結論は行の高さ 1.5、帯の上下の余白 12、左右の余白 20（「→ 」のぶんを含めて 2 文字ぶん狭い）、下の間 8
+  const q = c.question ? Math.ceil(lines(c.question, SECTION_Q_FONT, inner) * SECTION_Q_FONT * 1.4) + 8 : 0;
+  const a = c.answer ? Math.ceil(lines(c.answer, SECTION_A_FONT, inner - 20 - SECTION_A_FONT * 2) * SECTION_A_FONT * 1.5) + 12 + 8 : 0;
+  return TITLE_H + q + a;
 }
 
 export function emptyDoc(title: string): Doc {
@@ -684,11 +749,38 @@ function unitsOf(els: El[]): Unit[] {
   return out;
 }
 
+/** 列で並べるセクション（cols）の、1 列の幅 */
+export function colWidth(c: Box, cols: number): number {
+  return Math.max(40, Math.floor((c.w - PAD * 2 - GAP * (cols - 1)) / cols));
+}
+
+/**
+ * 列で並べるセクションの中身を、並べる順にして返す。順番は、今の位置から読む（上の行から、行の中は左から）。
+ * WHY 位置から読む: 人がドラッグで入れ替えても、エージェントが座標で置いても、順番を別の項目に書き直さずに済む。
+ * 行は、上の端が前の行の下の端より上にあるものをまとめる。背の違う付箋が並んだ行も、1 つの行と読める。
+ */
+function arrangedOrder(els: El[], container: El): El[] {
+  const items = membersOf(els, container).flatMap((m) => {
+    const b = isSolid(m) ? boxOf(m) : null;
+    return b ? [{ m, b }] : [];
+  });
+  items.sort((a, b) => a.b.y - b.b.y);
+  const rows: (typeof items)[] = [];
+  let bottom = -Infinity;
+  for (const it of items) {
+    const row = rows.at(-1);
+    if (row && it.b.y < bottom) row.push(it);
+    else rows.push([it]);
+    bottom = row && it.b.y < bottom ? Math.max(bottom, it.b.y + it.b.h) : it.b.y + it.b.h;
+  }
+  return rows.flatMap((row) => row.sort((a, b) => a.b.x - b.b.x).map((it) => it.m));
+}
+
 /** セクションの中で、左上から順に、ほかの中身と重ならない最初の場所を返す */
 function placeInside(els: El[], container: El, size: { w: number; h: number }): Point {
   const c = boxOf(container) ?? { x: 0, y: 0, w: 0, h: 0 };
   const left = c.x + PAD;
-  const top = c.y + TITLE_H;
+  const top = c.y + sectionTop(container);
   const right = Math.max(c.x + c.w - PAD, left + size.w);
   const taken: Box[] = [];
   for (const m of membersOf(els, container)) {
@@ -742,7 +834,7 @@ export interface CommentPayload {
   elements: Record<string, unknown>[];
 }
 
-const TEXT_FIELDS = ["text", "tag", "title", "label", "head", "rows", "color", "shape", "bars", "marks"] as const;
+const TEXT_FIELDS = ["text", "tag", "title", "question", "answer", "who", "status", "carriedFrom", "label", "head", "rows", "color", "shape", "bars", "marks"] as const;
 
 function briefOf(el: El): Record<string, unknown> {
   const rec: Record<string, unknown> = { ...el };
@@ -826,16 +918,67 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
    * セクションが下へ伸びて、下のものに届くなら、その段から下を全部ずらす。
    * WHY 段ごと: 届いたものだけをずらすと、横に並んだセクションの上がそろわなくなる。
    */
-  const growthPush = (id: string, before: Box, after: Box): { units: Unit[]; threshold: number; dy: number } | null => {
-    const others = unitsOf(doc.elements).filter((u) => u.head !== id);
+  const growthPush = (id: string, before: Box, after: Box, others: Unit[] = unitsOf(doc.elements).filter((u) => u.head !== id)): { units: Unit[]; threshold: number; dy: number } | null => {
     const below = others.filter((u) => u.box.y >= before.y + before.h && u.box.x < after.x + after.w && after.x < u.box.x + u.box.w);
     const threshold = Math.min(...below.map((u) => u.box.y));
     const dy = after.y + after.h + OUTER_GAP - threshold;
     return below.length > 0 && dy > 0 ? { units: others, threshold, dy } : null;
   };
 
-  for (const [i, op] of ops.entries()) {
-    const at = `ops[${i}]`;
+  /**
+   * 列の指定（cols）があるセクションの中身を、左上から列に詰めて並べ、セクションの高さを中身に合わせる。
+   * 中身が無ければ、題名の帯だけの高さに畳む。
+   * WHY 操作のたびに全部を並べ直す: 足す・消す・動かす・幅を変えるのどれでも、同じ規則で詰まった状態に戻すため。
+   * 並べ終わった状態にもう一度かけても、何も変わらない。
+   */
+  const arrange = (id: string): void => {
+    const c = byId.get(id);
+    const cb = c ? boxOf(c) : null;
+    if (!c || !cb || c.cols === undefined) return;
+    const put = (old: El, next: El): void => {
+      if (JSON.stringify(old) === JSON.stringify(next)) return;
+      replace(next);
+      if (!addedIds.has(next.id)) updatedIds.add(next.id);
+    };
+    // WHY 並べる前にまとまりを取る: まとまりは、中心がセクションの中にあるかで中身を見分ける。
+    // 並べている途中（中身は動いたが、セクションの高さは古い）や、伸ばした後（下にあった要素が枠に入る）に取ると、見分けを間違える
+    const others = unitsOf(doc.elements).filter((u) => u.head !== c.id);
+    const ordered = arrangedOrder(doc.elements, c);
+    const colW = colWidth(cb, c.cols);
+    let y = cb.y + sectionTop(c);
+    for (let i = 0; i < ordered.length; i += c.cols) {
+      let rowH = 0;
+      for (const [k, m] of ordered.slice(i, i + c.cols).entries()) {
+        const x = cb.x + PAD + k * (colW + GAP);
+        // 画像は、縦横の比を保って列の幅に合わせる
+        const h = m.type === "image" && m.w !== undefined && m.h !== undefined ? { h: Math.round((m.h * colW) / m.w) } : {};
+        const next: El = { ...m, ...h, w: colW, x, y };
+        rowH = Math.max(rowH, sizeOf(next).h);
+        // この要素を指しているコメントは、一緒に動かす
+        for (const note of doc.elements.filter((e) => e.type === "comment" && e.on === m.id)) put(note, shifted(note, x - (m.x ?? 0), y - (m.y ?? 0)));
+        put(m, next);
+      }
+      y += rowH + GAP;
+    }
+    const h = ordered.length === 0 ? sectionTop(c) : y - GAP + PAD - cb.y;
+    if (h === cb.h) return;
+    put(c, { ...c, h });
+    if (h > cb.h) {
+      const push = growthPush(c.id, cb, { ...cb, h }, others);
+      if (push) pushDown(push.units, push.threshold, push.dy);
+    }
+  };
+  const arrangeAll = (): void => {
+    const sections = doc.elements.filter((e) => e.type === "container" && e.cols !== undefined).sort((a, b) => (a.y ?? 0) - (b.y ?? 0));
+    for (const c of sections) arrange(c.id);
+  };
+
+  // 型（template）は、要素を足す操作の並びに展開して、その場に差し込む。labels は、エラーに出す操作の番号（渡された並びでの番号）
+  const queue: unknown[] = [...ops];
+  const labels = ops.map((_, i) => `ops[${i}]`);
+  for (let i = 0; i < queue.length; i++) {
+    const op = queue[i];
+    const at = labels[i] ?? `ops[${i}]`;
     if (!isRecord(op)) return fail(`${at}: 操作はオブジェクトで書く`);
     switch (op.op) {
       case "add": {
@@ -858,23 +1001,35 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         let grown: El | null = null;
         // 置いた後に下へずらすもの。新しい要素を入れる前のまとまりで決める（新しい要素が、重なった先の中身に数えられないように）
         let push: { units: Unit[]; threshold: number; dy: number } | null = null;
-        if (type && NEEDS_PLACE.includes(type)) {
+        place: if (type && NEEDS_PLACE.includes(type)) {
           const hasPos = raw.x !== undefined && raw.y !== undefined;
           const hints = [hasPos, op.in !== undefined, op.above !== undefined].filter(Boolean).length;
           if (hints > 1) return fail(`${at}: x・y と in と above は、どれか 1 つだけ書く`);
           if (!hasPos) {
             raw.x = 0;
             raw.y = 0;
+            // 列で並べるセクションに足すものは、先に列の幅にする（幅で高さが変わる文字と表の、場所の見積もりを合わせる）
+            const into = typeof op.in === "string" ? byId.get(op.in) : undefined;
+            const intoBox = into?.cols === undefined ? null : boxOf(into);
+            if (into?.cols !== undefined && intoBox && type !== "image" && type !== "container") raw.w = colWidth(intoBox, into.cols);
             const probe = parseEl(raw);
             if (!probe.ok) return fail(`${at}: ${probe.error}`);
             const size = sizeOf(probe.value);
             if (op.in !== undefined) {
               const c = typeof op.in === "string" ? byId.get(op.in) : undefined;
               if (!c || c.type !== "container") return fail(`${at}: in のセクションが無い: ${JSON.stringify(op.in)}`);
+              const cb = boxOf(c) ?? { x: 0, y: 0, w: 0, h: 0 };
+              if (c.cols !== undefined) {
+                // 列で並べるセクションでは、右下の隅に、中心がセクションに入るように仮に置く。
+                // 並べる順は位置から読むので、いちばん後ろになり、操作の後の並べ直し（arrange）が列の末尾へ入れる。
+                // WHY セクションを仮に伸ばさない: 伸ばした枠に、下にあった別の要素が入って、中身に数えられる
+                raw.x = cb.x + cb.w - size.w / 2 - 1;
+                raw.y = cb.y + cb.h - size.h / 2 - 1;
+                break place;
+              }
               const [x, y] = placeInside(doc.elements, c, size);
               raw.x = x;
               raw.y = y;
-              const cb = boxOf(c) ?? { x: 0, y: 0, w: 0, h: 0 };
               const w = Math.max(cb.w, x + size.w + PAD - cb.x);
               const h = Math.max(cb.h, y + size.h + PAD - cb.y);
               if (w !== cb.w || h !== cb.h) grown = { ...c, w, h };
@@ -1029,6 +1184,17 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         reordered = true;
         break;
       }
+      case "template": {
+        // 場所を書かなければ、全体の右に置く。id を書かなければ、tp1、tp2…と振る
+        const b = boundsOf(doc.elements);
+        do doc.seq += 1;
+        while (byId.has(`tp${doc.seq}`));
+        const expanded = expandTemplate(op, b ? [b.x + b.w + OUTER_GAP, b.y] : [0, 0], `tp${doc.seq}`);
+        if (!expanded.ok) return fail(`${at}: ${expanded.error}`);
+        queue.splice(i + 1, 0, ...expanded.value);
+        labels.splice(i + 1, 0, ...expanded.value.map(() => `${at}（${String(op.kind)} の展開）`));
+        break;
+      }
       case "title": {
         if (typeof op.title !== "string") return fail(`${at}: title は文字列`);
         doc.title = op.title;
@@ -1036,8 +1202,10 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         break;
       }
       default:
-        return fail(`${at}: op は add | set | rm | title | say | order | compact のどれか`);
+        return fail(`${at}: op は add | set | rm | title | say | order | compact | template のどれか`);
     }
+    // WHY 操作 1 つごと: 同じまとまりの後ろの操作（above、コメントを置く場所）が、並べ終わった位置を見られるようにする
+    arrangeAll();
   }
 
   // 消えた要素に付いていた矢印は、指す先が無いので一緒に消す

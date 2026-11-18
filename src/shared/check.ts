@@ -1,10 +1,10 @@
 // ボードの見た目の問題を、描かずに測る。エージェントが、スクショを見なくても崩れに気づけるようにする。
 // 文字と表の大きさは見積もり（model.ts の sizeOf）なので、画面で測った値とは数 px ずれる。
-import { FONT, PAD, TITLE_H, boxOf, isSolid, textWidth, type Box, type Doc, type El, type Point, type ShapeKind } from "./model.ts";
+import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_TITLE_FONT, PAD, TITLE_H, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type Point, type ShapeKind } from "./model.ts";
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
-import { parseRich, plainText, type MarkColor } from "./rich.ts";
+import { isBoardRef, parseRich, plainText, type MarkColor } from "./rich.ts";
 import { LABEL_FONT, LABEL_LIFT, arrowPath, labelSpot } from "./route.ts";
 
 export type IssueKind =
@@ -31,7 +31,17 @@ export type IssueKind =
   /** 似た中身の付箋や文字が、複数ある */
   | "duplicate-text"
   /** 同じ日付や金額が、3 つ以上の付箋や文字に書かれている */
-  | "repeated-value";
+  | "repeated-value"
+  /** ほかのボードへのリンクの行き先に、ファイルが無い */
+  | "dead-link"
+  /** 列で並べるセクション（cols）の 1 列が狭くて、付箋の文字が入りにくい */
+  | "narrow-column"
+  /** 付箋の欄（title・status・carriedFrom）に書けることを、本文や札（tag）に手で書いている */
+  | "handwritten-field"
+  /** 付箋の見出し（title）が 1 行に入らない */
+  | "long-title"
+  /** セクションに論点（question）があって、結論（answer）が無い */
+  | "open-question";
 
 export interface Issue {
   kind: IssueKind;
@@ -54,6 +64,8 @@ const MIN_FONT = 9;
 const SHAPE_FONT = 15;
 const LINE = 1.4;
 const TAG_H = 18;
+/** 付箋の、状態と発言者の札の段の高さ。画面の CSS（.shape .meta）と同じ値 */
+const META_H = 21;
 /** ガントの行の名前の文字の大きさと、欄の左右の余白の合計。画面の CSS（.gantt と .gname）と同じ値 */
 const GANTT_FONT = 12;
 const GANTT_NAME_PAD = 12;
@@ -71,7 +83,23 @@ const MIN_HIGHLIGHT_DISTANCE = 26;
 const MARK_NAME: Record<MarkColor, string> = { yellow: "黄", green: "緑", blue: "青", pink: "ピンク", orange: "オレンジ" };
 const FILL_NAME: Record<Color, string> = { yellow: "黄", orange: "オレンジ", red: "赤", pink: "ピンク", purple: "紫", blue: "青", teal: "青緑", green: "緑", gray: "灰", white: "白", ink: "濃い色" };
 
+/** 列で並べるセクションの 1 列が、これより狭ければ知らせる。付箋の既定の幅（220）の半分ほどで、1 行に全角 6 文字しか入らない */
+const MIN_COL_W = 120;
+
+/** 検査が、ボードの外のことを確かめる手段。渡さなければ、その検査はしない */
+export interface CheckContext {
+  /** ほかのボードへのリンクの行き先（相対パス）に、ファイルがあるか */
+  boardExists?: (ref: string) => boolean;
+}
+
 const round = (n: number): number => Math.round(n);
+
+/** 要素に書かれた、ほかのボードへのリンクの行き先 */
+function boardRefs(el: El): string[] {
+  const texts = [el.text ?? "", ...(el.head ?? []), ...(el.rows ?? []).flat()];
+  const inText = texts.flatMap((t) => parseRich(t).flatMap((b) => b.lines.flatMap((line) => line.flatMap((i) => (i.kind === "link" && isBoardRef(i.href) ? [i.href] : [])))));
+  return [...new Set([...inText, ...(el.href !== undefined && isBoardRef(el.href) ? [el.href] : [])])];
+}
 
 function intersection(a: Box, b: Box): { w: number; h: number } | null {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
@@ -138,11 +166,20 @@ function innerSize(kind: ShapeKind, w: number, h: number): { w: number; h: numbe
 }
 
 /** 図形の文字が収まる、いちばん大きい文字の大きさ。いちばん小さくしても収まらなければ null */
+/** 付箋の見出しが、何行になるか。見出しが無ければ 0 */
+function titleLines(el: El): number {
+  if (!el.title) return 0;
+  const inner = innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0);
+  return Math.max(1, Math.ceil(textWidth(el.title, NOTE_TITLE_FONT) / Math.max(NOTE_TITLE_FONT, inner.w)));
+}
+
 function fittedFont(el: El): number | null {
   const inner = innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0);
-  const lines = plainText(el.text ?? "").split("\n");
-  const room = inner.h - (el.tag ? TAG_H : 0);
-  for (let px = el.size ? FONT[el.size] : SHAPE_FONT; px >= MIN_FONT; px--) {
+  // 本文が空なら、行は無い（見出しだけの付箋）
+  const lines = el.text ? plainText(el.text).split("\n") : [];
+  const heading = titleLines(el);
+  const room = inner.h - (el.tag ? TAG_H : 0) - (statusBadge(el) || el.who ? META_H : 0) - (heading > 0 ? heading * NOTE_TITLE_FONT * LINE + 2 : 0);
+  for (let px = el.size ? FONT[el.size] : el.title ? NOTE_SUB_FONT : SHAPE_FONT; px >= MIN_FONT; px--) {
     const count = lines.reduce((n, l) => n + Math.max(1, Math.ceil(textWidth(l, px) / Math.max(px, inner.w))), 0);
     if (count * px * LINE <= room) return px;
   }
@@ -229,8 +266,27 @@ function checkRepeats(doc: Doc): Issue[] {
   return issues;
 }
 
-export function checkBoard(doc: Doc): Issue[] {
+export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
   const issues: Issue[] = [];
+  // リンクの行き先。人が押すまで気づけないので、ここで知らせる
+  if (ctx.boardExists) {
+    for (const el of doc.elements) {
+      for (const ref of boardRefs(el)) {
+        if (!ctx.boardExists(ref)) issues.push({ kind: "dead-link", ids: [el.id], message: `${el.id} のリンクの行き先のボードが無い: ${ref}。パスを直すか、xwb open でボードを作る` });
+      }
+    }
+  }
+  // 論点を書いたセクションの結論。会議の終わりに、結論の出ていない論点を拾えるようにする
+  for (const el of doc.elements) {
+    if (el.type === "container" && el.question && !el.answer) issues.push({ kind: "open-question", ids: [el.id], message: `セクション ${el.id} の論点「${el.question}」に結論（answer）が無い。決まったら書く。持ち越すなら、その旨を answer に書く` });
+  }
+  // 列で並べるセクションの、列の幅
+  for (const el of doc.elements) {
+    const box = el.type === "container" && el.cols !== undefined ? boxOf(el) : null;
+    if (!box || el.cols === undefined) continue;
+    const w = colWidth(box, el.cols);
+    if (w < MIN_COL_W) issues.push({ kind: "narrow-column", ids: [el.id], message: `セクション ${el.id} の 1 列の幅が ${w} しかない（cols ${el.cols}）。cols を減らすか、セクションの w を増やす`, px: w });
+  }
   const byId = new Map(doc.elements.map((e) => [e.id, e]));
   const boxed = (list: El[]): { el: El; box: Box }[] =>
     list.flatMap((el) => {
@@ -268,8 +324,9 @@ export function checkBoard(doc: Doc): Issue[] {
         continue;
       }
       // 題名の帯（上 TITLE_H）にかかるか、左右と下の余白が足りない
-      if (top < TITLE_H - TOLERANCE - MIN_MARGIN) {
-        issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} の題名に近い（上から ${round(top)}。${TITLE_H} 空ける）`, px: round(top) });
+      const head = sectionTop(s.el);
+      if (top < head - TOLERANCE - MIN_MARGIN) {
+        issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} の題名${head > TITLE_H ? "か論点・結論" : ""}に近い（上から ${round(top)}。${head} 空ける）`, px: round(top) });
       } else if (Math.min(left, right, bottom) < MIN_MARGIN) {
         const margin = Math.min(left, right, bottom);
         issues.push({ kind: "cramped", ids: [m.el.id, s.el.id], message: `${m.el.id} がセクション ${s.el.id} の端に詰まっている（余白 ${round(margin)}。${PAD} 空ける）`, px: round(margin) });
@@ -310,7 +367,13 @@ export function checkBoard(doc: Doc): Issue[] {
 
   // 図形の文字の大きさ
   for (const el of doc.elements) {
-    if (el.type !== "shape" || !el.text) continue;
+    if (el.type !== "shape") continue;
+    // 付箋の欄。手で書いた見出し・状態・持ち越しの日付は、欄に書けば、見た目がそろい、検査と一覧で読める
+    if (!el.title && /^\*\*[^*\n]+\*\*\n/.test(el.text ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の 1 行めの太字は、見出しとして title に書く（本文は text に残す）` });
+    if (el.carriedFrom === undefined && /\d+\/\d+\s*から/.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
+    if (el.status === undefined && /^(決定|未決|持ち越し|優先)/.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（decided・open・carried・priority）。発言者は who に書く` });
+    if (titleLines(el) > 1) issues.push({ kind: "long-title", ids: [el.id], message: `${el.id} の見出し（title）が 1 行に入らない。短くして、残りは text に書く`, px: titleLines(el) });
+    if (!el.text && !el.title) continue;
     const px = fittedFont(el);
     if (px === null) issues.push({ kind: "text-overflow", ids: [el.id], message: `${el.id} の文字が、いちばん小さくしても収まらない。箱を大きくするか、文字を減らす` });
     else if (px < SMALL_FONT) issues.push({ kind: "small-text", ids: [el.id], message: `${el.id} の文字が ${px}px まで小さくなる。箱を大きくするか、文字を減らす`, px });

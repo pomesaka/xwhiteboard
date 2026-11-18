@@ -20,7 +20,9 @@ const USAGE = `xwb: ローカルで動くホワイトボード
   xwb ls <board>                                要素の一覧（文字と表は見積もった w・h 付き）
   xwb claim <board> <json>                      書き込み中の範囲を枠で示す（{x,y,w,h,label,ttl}）
   xwb unclaim <board> [id]                      枠を消す
+  xwb focus <board> [セクションの id]            話している議題のセクションを残して、ほかを薄くする（id 無しでやめる）
   xwb check <board>                             見た目の問題（重なり、はみ出し、矢印の突き抜けなど）の一覧
+  xwb template <board> [json|-]                 型（matrix・versus・tree）を、中身のデータから描く
   xwb compact <board> [--fit]                   空いた段を上へ詰める（--fit で、セクションも中身の高さまで低くする）
   xwb order <board> <id> front|back           要素を前面か背面へ動かす
   xwb changes <board> [--clear]                人がブラウザで変えた要素の一覧（--clear で、一覧を返して消す）
@@ -153,6 +155,14 @@ async function main(): Promise<void> {
       print({ title: j.title, elements });
       return;
     }
+    case "template": {
+      // 型（matrix・versus・tree）を、セクション・付箋・矢印に展開して足す
+      const data = await jsonArg(pos[1]);
+      // オブジェクトでなければ、サーバーが理由を付けて断る（kind が無い）
+      const res = await call("/api/ops", { board: boardArg(pos[0]), ops: [{ ...(isRecord(data) ? data : {}), op: "template" }] });
+      print(isRecord(res) && Array.isArray(res.added) ? { added: res.added.map((e) => (isRecord(e) ? e.id : e)) } : res);
+      return;
+    }
     case "compact": {
       const res = await call("/api/ops", { board: boardArg(pos[0]), ops: [{ op: "compact", fit: flags.has("--fit") }] });
       // 動いた要素は多いので、id だけを返す
@@ -192,6 +202,10 @@ async function main(): Promise<void> {
       print(await call("/api/claim", { ...input, board: boardArg(pos[0]) }));
       return;
     }
+    case "focus":
+      // セクションの id を書けば注目し、書かなければやめる
+      print(await call("/api/focus", { board: boardArg(pos[0]), ...(pos[1] ? { id: pos[1] } : {}) }));
+      return;
     case "unclaim":
       await call("/api/unclaim", { board: boardArg(pos[0]), ...(pos[1] ? { id: pos[1] } : {}) });
       return;
