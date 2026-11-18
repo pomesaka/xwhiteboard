@@ -50,6 +50,24 @@ describe("画面の操作 → 元に戻す で、列で並べないボードが�
   ])("%s", (_name, g) => expectRoundtrip(base, g));
 });
 
+// 自由に置くセクション w（付箋 w1）の右に、セクション r（中身 r1）と、その下の r2。さらに右に、まとめの帯 b
+const side = apply(emptyDoc("t"), [
+  { op: "add", el: { id: "w", type: "container", x: 0, y: 0, w: 504, h: 300 } },
+  { op: "add", in: "w", el: { id: "w1", type: "shape", text: "w1" } },
+  { op: "add", el: { id: "r", type: "container", x: 564, y: 0, w: 504, h: 160 } },
+  { op: "add", in: "r", el: { id: "r1", type: "shape", text: "r1" } },
+  { op: "add", el: { id: "r2", type: "container", x: 564, y: 220, w: 504, h: 100 } },
+  { op: "add", el: { id: "b", type: "summary", show: "decided", x: 1128, y: 0 } },
+]).doc;
+
+describe("画面の操作 → 元に戻す で、右へ広げて右のものがずれたボードが元に戻る", () => {
+  test.each<[string, Gesture | null]>([
+    ["セクションの幅を広げる（右の列と帯が右へずれる）", resize(side, "w", 800, 300)],
+    ["セクションの幅と高さを一緒に広げる", resize(side, "w", 800, 500)],
+    ["セクションに幅の広い画像を足す（セクションが右へ広がる）", { ...add({ id: "img", type: "image" }), ops: [{ op: "add", in: "w", el: { id: "img", type: "image", src: "x.png", w: 600, h: 100 } }] }],
+  ])("%s", (_name, g) => expectRoundtrip(side, g));
+});
+
 // まとめの帯 2 つ（決定 d、未決 o）を横に並べ、その下に、列で並べるセクション t（付箋 3 枚）と、自由に置くセクション u（付箋 1 枚）。帯の下の端のすぐ下に線 l2
 const banded = apply(emptyDoc("t"), [
   { op: "add", el: { id: "d", type: "summary", show: "decided", x: 0, y: 0 } },

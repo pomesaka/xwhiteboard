@@ -932,6 +932,25 @@ function growthPush(others: readonly Unit[], before: Box, after: Box, gap: numbe
   return { units: others.filter((u) => u.box.y >= from || swallowed(u)), dy };
 }
 
+/**
+ * セクションが before から after へ右に伸びたときに、右へずらすまとまりと、ずらす量を返す。ずらすものが無ければ null。
+ * 下への押し下げ（growthPush）を横に写したもの。伸びる前の右の端より右から始まり、縦の範囲が重なるまとまりのうち、いちばん左のものの位置から右を、
+ * 縦の列も含めて全部、伸びた右の端から gap 空く所までずらす。
+ * WHY 列ごと: 届いたものだけをずらすと、縦に並んだセクションの左の端がそろわなくなる。さらに右のものも同じだけ動くので、ずらした先で重ならない。
+ * まとめの帯、固定した要素、線とコメントも、押し下げと同じに、一緒にずらす。
+ */
+function growthPushRight(others: readonly Unit[], before: Box, after: Box, gap: number): { units: Unit[]; dx: number } | null {
+  const right = before.x + before.w;
+  const end = after.x + after.w;
+  const facing = (u: Unit): boolean => u.box.y < after.y + after.h && after.y < u.box.y + u.box.h;
+  const starts = others.filter((u) => u.box.x >= right && facing(u));
+  if (starts.length === 0) return null;
+  const threshold = Math.min(...starts.map((u) => u.box.x));
+  const dx = end + gap - threshold;
+  if (dx <= 0) return null;
+  return { units: others.filter((u) => u.box.x >= threshold), dx };
+}
+
 interface Item {
   el: El;
   box: Box;
@@ -1287,6 +1306,15 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
       touch(id);
     }
   };
+  /** まとまりを、dx だけ右へずらす */
+  const pushRight = (push: { units: Unit[]; dx: number } | null): void => {
+    for (const id of push?.units.flatMap((u) => u.ids) ?? []) {
+      const el = byId.get(id);
+      if (!el) continue;
+      replace(shifted(el, push?.dx ?? 0, 0));
+      touch(id);
+    }
+  };
   /** セクション id のほかの、まとまり */
   const unitsBut = (id: string): Unit[] => unitsOf(doc.elements).filter((u) => u.head !== id);
 
@@ -1390,6 +1418,8 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         let grown: El | null = null;
         // 置いた後に下へずらすもの。新しい要素を入れる前のまとまりで決める（新しい要素が、重なった先の中身に数えられないように）
         let push: { units: Unit[]; dy: number } | null = null;
+        /** in で、自由なセクションが右へ広がったときの、広がる前と後の枠 */
+        let widen: { id: string; before: Box; after: Box } | null = null;
         // 列で並べるセクションに in で足すときの、そのセクションの id
         let intoCols: string | null = null;
         place: if (type && NEEDS_PLACE.includes(type)) {
@@ -1422,6 +1452,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
               const h = Math.max(cb.h, y + size.h + PAD - cb.y);
               if (w !== cb.w || h !== cb.h) grown = { ...c, w, h };
               if (grown) push = growthPush(unitsBut(c.id), cb, { ...cb, w, h }, OUTER_GAP);
+              if (grown && w > cb.w) widen = { id: c.id, before: cb, after: { ...cb, w, h } };
             } else if (op.above !== undefined) {
               const units = unitsOf(doc.elements);
               const target = units.find((u) => typeof op.above === "string" && u.ids.includes(op.above));
@@ -1441,6 +1472,12 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         const r = parseEl(raw);
         if (!r.ok) return fail(`${at}: ${r.error}`);
         pushDown(push);
+        // 右へも伸びたら、右のものをずらす。下へずらした後のまとまりで見る（下へずれたものは、縦の範囲が重ならない）
+        // 足した要素は、まだボードに無いので、ずらすものに入らない
+        if (widen) {
+          const { id, before, after } = widen;
+          pushRight(growthPushRight(unitsBut(id), before, after, OUTER_GAP));
+        }
         replace(r.value);
         addedIds.add(r.value.id);
         if (r.value.type === "container") sited.set(r.value.id, at);
@@ -1477,6 +1514,8 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         if (before && after && (before.x !== after.x || before.y !== after.y || before.w !== after.w || (el.cols === undefined && r.value.cols !== undefined))) sited.set(el.id, at);
         // セクションの下の端を set で下げたときも、in で伸びたときと同じに、下のものをずらす
         if (before && after && before.x === after.x && before.y === after.y && after.h > before.h) pushDown(growthPush(unitsBut(el.id), before, after, OUTER_GAP));
+        // 右の端を set で右へ広げたときも、同じ考え方で、右のものをずらす。縮んだときは、左へ詰めない（詰めるのは format）
+        if (before && after && before.x === after.x && before.y === after.y && after.w > before.w) pushRight(growthPushRight(unitsBut(el.id), before, { ...after, h: Math.max(before.h, after.h) }, OUTER_GAP));
         // セクションの中の要素が下へ伸びたら（h を増やした、文字や行が増えた）、同じセクションの、その下にある中身を押し下げる。
         // 入りきらなくなったら、セクションも伸ばす。WHY: 文字が小さいという検査の指摘を、箱を大きくするだけで直せるようにする
         const old = boxOf(el);
