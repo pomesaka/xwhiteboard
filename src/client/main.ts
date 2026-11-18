@@ -5,7 +5,7 @@ import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type
 import { svgSrc } from "./sketch.ts";
 import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, GANTT_ROW_H, GANTT_SCALE_H, GANTT_UNITS, dragBar, formatDay, ganttLayout, parseDay, type GanttBar } from "../shared/gantt.ts";
 import type { EndMark, ShapeKind } from "../shared/model.ts";
-import { dropMissing, restoreOps, withGeometry } from "../shared/restore.ts";
+import { restoreOp, withGeometry } from "../shared/restore.ts";
 import { focusLabel, keptOnFocus } from "../shared/focus.ts";
 import { itemsOf, summarize, withSummaryHeights, type Summary } from "../shared/summary.ts";
 
@@ -1126,8 +1126,14 @@ interface OpsResult {
   added: El[];
   updated: El[];
   removed: El[];
-  /** サーバーが足した変更（並べ直し、押し下げ、幅をそろえる）を、元へ戻す操作（shared/restore.ts） */
-  restore: unknown[];
+}
+
+/** 「元に戻す」に積む操作の作り方。積まない操作には、null を渡す */
+interface Undoable {
+  /** ドラッグや大きさの変更で、手元の要素を先に書き換えていたときの、書き換える前の要素 */
+  origin?: ReadonlyMap<string, El>;
+  /** 要素のほかに戻すもの（題名）の操作 */
+  also?: unknown[];
 }
 
 let inflight: Promise<unknown> = Promise.resolve();
@@ -1136,13 +1142,13 @@ let inflight: Promise<unknown> = Promise.resolve();
  * 書き込みを 1 つずつ順に送る。
  * WHY: 「Claude に送る」は、直前の編集がサーバーに届いてから一覧を作らないと、その編集を取りこぼす。
  */
-function commit(ops: unknown[], inverse: unknown[] | null): Promise<OpsResult | null> {
-  const p = inflight.then(() => commitNow(ops, inverse));
+function commit(ops: unknown[], undoable: Undoable | null): Promise<OpsResult | null> {
+  const p = inflight.then(() => commitNow(ops, undoable));
   inflight = p.catch(() => null);
   return p;
 }
 
-async function commitNow(ops: unknown[], inverse: unknown[] | null): Promise<OpsResult | null> {
+async function commitNow(ops: unknown[], undoable: Undoable | null): Promise<OpsResult | null> {
   if (ops.length === 0) return null;
   let j: unknown;
   let okStatus = false;
@@ -1160,12 +1166,16 @@ async function commitNow(ops: unknown[], inverse: unknown[] | null): Promise<Ops
     await resync();
     return null;
   }
-  const updated = parseEls(j.updated);
-  const result: OpsResult = { added: parseEls(j.added), updated, removed: parseEls(j.removed), restore: restoreOps(before, updated, inverse ?? []) };
+  const result: OpsResult = { added: parseEls(j.added), updated: parseEls(j.updated), removed: parseEls(j.removed) };
   for (const el of result.removed) drop(el.id);
   for (const el of [...result.added, ...result.updated]) upsert(el);
   applyOrder(j.order);
-  if (inverse) pushUndo([...inverse, ...result.restore]);
+  if (undoable) {
+    // 元に戻す操作は、返事から作る。押し下げや並べ直しのようにサーバーが足した変更も、一緒に戻る（shared/restore.ts）
+    const back = restoreOp(before, ops, { ...result, order: j.order }, undoable.origin);
+    const entry = [...(undoable.also ?? []), ...(back ? [back] : [])];
+    if (entry.length > 0) pushUndo(entry);
+  }
   refresh();
   return result;
 }
@@ -1180,14 +1190,23 @@ function pushUndo(ops: unknown[]): void {
 /** 直前の「元に戻す」が失敗して、その中身を残してあるか */
 let undoFailed = false;
 
-async function undo(): Promise<void> {
+let undoing: Promise<void> = Promise.resolve();
+
+/**
+ * 「元に戻す」を 1 つずつ順に送る。
+ * WHY: 前の「元に戻す」の返事を待たずに次を始めると、同じ操作をもう 1 回送り、その下の操作を送らずに捨てる（キーを押し続けると起きる）
+ */
+function undo(): Promise<void> {
+  undoing = undoing.then(undoOne);
+  return undoing;
+}
+
+async function undoOne(): Promise<void> {
   const ops = undoStack.at(-1);
   if (!ops) return;
-  // 積んだ後に、エージェントやほかの画面が消した要素への操作は除く
-  const live = dropMissing(ops, (id) => els.has(id));
   // WHY 失敗しても 1 回は残す: 失敗の後は、サーバーの今の中身を読み直す（resync）。
   // 読み直した後なら、消えた要素を除いて通ることがある。2 回続けて失敗した中身は、残すと次の「元に戻す」をふさぐので捨てる
-  const done = live.length === 0 || (await commit(live, null)) !== null;
+  const done = (await commit(ops, null)) !== null;
   if (done || undoFailed) undoStack.splice(undoStack.lastIndexOf(ops), 1);
   if (!done && undoFailed) toast("元に戻せなかった操作を捨てた");
   undoFailed = !done && !undoFailed;
@@ -1199,28 +1218,14 @@ interface Change {
   patch: Record<string, unknown>;
 }
 
-/** 項目の変更を送る。元に戻す操作は、変える前の値から作る */
+/** 項目の変更を送る */
 function setOps(changes: Change[]): Promise<OpsResult | null> {
-  const ops: unknown[] = [];
-  const inverse: unknown[] = [];
-  for (const c of changes) {
-    const el = els.get(c.id);
-    if (!el) continue;
-    const rec: Record<string, unknown> = { ...el };
-    const back: Record<string, unknown> = {};
-    for (const k of Object.keys(c.patch)) back[k] = rec[k] ?? null;
-    ops.push({ op: "set", id: c.id, patch: c.patch });
-    inverse.push({ op: "set", id: c.id, patch: back });
-  }
-  return commit(ops, inverse);
+  return commit(changes.flatMap((c) => (els.has(c.id) ? [{ op: "set", id: c.id, patch: c.patch }] : [])), {});
 }
 
 async function addEl(el: Record<string, unknown>): Promise<El | null> {
-  const r = await commit([{ op: "add", el }], null);
-  const added = r?.added[0];
-  if (!added) return null;
-  pushUndo([{ op: "rm", id: added.id }, ...(r?.restore ?? [])]);
-  return added;
+  const r = await commit([{ op: "add", el }], {});
+  return r?.added[0] ?? null;
 }
 
 async function removeEls(all: string[]): Promise<void> {
@@ -1230,8 +1235,7 @@ async function removeEls(all: string[]): Promise<void> {
     if (all.length > 0) toast("固定した要素は消せない。先に固定を外す");
     return;
   }
-  const r = await commit(ids.map((id) => ({ op: "rm", id })), null);
-  if (r) pushUndo([...r.removed.map((el) => ({ op: "add", el })), ...r.restore]);
+  await commit(ids.map((id) => ({ op: "rm", id })), {});
 }
 
 // ---- 選択と、選択した要素への操作 ----
@@ -1863,27 +1867,24 @@ function endGesture(ev: PointerEvent): void {
         break;
       }
       const ops: unknown[] = [];
-      const inverse: unknown[] = [];
       for (const orig of g.orig.values()) {
         const now = els.get(orig.id);
-        if (!now) continue;
-        ops.push({ op: "set", id: orig.id, patch: positionPatch(now) });
-        inverse.push({ op: "set", id: orig.id, patch: positionPatch(orig) });
+        if (now) ops.push({ op: "set", id: orig.id, patch: positionPatch(now) });
       }
-      void commit(ops, inverse);
+      void commit(ops, { origin: g.orig });
       break;
     }
     case "gantt": {
       const now = els.get(g.id);
       if (!now || JSON.stringify(now.bars) === JSON.stringify(g.orig.bars)) break;
-      void commit([{ op: "set", id: g.id, patch: { bars: now.bars } }], [{ op: "set", id: g.id, patch: { bars: g.orig.bars } }]);
+      void commit([{ op: "set", id: g.id, patch: { bars: now.bars } }], { origin: new Map([[g.id, g.orig]]) });
       break;
     }
     case "resize": {
       const now = els.get(g.orig.id);
       if (!now) break;
       const patch: Record<string, unknown> = widthOnly(g.orig) ? { w: now.w } : { w: now.w, h: now.h };
-      void commit([{ op: "set", id: now.id, patch }], [{ op: "set", id: now.id, patch: { w: g.orig.w ?? null, ...("h" in patch ? { h: g.orig.h ?? null } : {}) } }]);
+      void commit([{ op: "set", id: now.id, patch }], { origin: new Map([[now.id, g.orig]]) });
       break;
     }
     case "marquee": {
@@ -2086,7 +2087,7 @@ titleNode.addEventListener("dblclick", () => {
 titleNode.addEventListener("blur", () => {
   titleNode.removeAttribute("contenteditable");
   const next = (titleNode.textContent ?? "").trim();
-  if (next !== title) void commit([{ op: "title", title: next }], [{ op: "title", title }]).then(() => setTitle(next));
+  if (next !== title) void commit([{ op: "title", title: next }], { also: [{ op: "title", title }] }).then(() => setTitle(next));
 });
 
 // ---- 起動 ----

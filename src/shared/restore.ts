@@ -1,11 +1,9 @@
-// 画面の「元に戻す」が送る、逆の操作の組み立て。
+// 画面の「元に戻す」が送る操作の組み立て。
 // 画面（src/client/main.ts）だけが使う。applyOps との往復をテストで確かめられるように、DOM を使わない関数にしてある。
-import { isRecord, type El } from "./model.ts";
+import { isRecord, isSolid, membersOf, type El } from "./model.ts";
 
 /** 要素の位置と大きさを決める項目 */
 export const GEOMETRY = ["x", "y", "w", "h", "points", "from", "to"] as const;
-/** そのうち、位置を決める項目 */
-const POSITION: readonly string[] = ["x", "y", "points", "from", "to"];
 
 /** local の位置と大きさを、remote に写す。ドラッグの最中に届いた更新で、手元の位置を保つのに使う */
 export function withGeometry(remote: El, local: El): El {
@@ -14,42 +12,66 @@ export function withGeometry(remote: El, local: El): El {
   return out;
 }
 
-/**
- * サーバーの返事で変わった要素（updated）の位置と大きさを、変える前の値（before）へ戻す操作を作る。
- * WHY: 逆の操作を、送った項目だけから作ると、サーバーが足した変更（押し下げ、セクションの伸び、幅をそろえる）が戻らない。
- * 位置の項目は、値が変わっていなくても書く。
- * WHY: 戻す操作の中で、列で並べるセクションを set で動かすと、サーバーが中身を一緒に動かす。
- * 押し下げと詰め直しが打ち消し合って位置が変わらなかった中身は、書かなければ、そのぶんずれる。
- * 送る側が逆の操作（inverse）の set に書いた項目は、ここでは作らない。
- * ドラッグでは、before が動かした後の値で、元の値は inverse にあるため。
- */
-export function restoreOps(before: ReadonlyMap<string, El>, updated: readonly El[], inverse: readonly unknown[]): unknown[] {
-  const covered = new Map<string, Set<string>>();
-  for (const op of inverse) {
-    if (!isRecord(op) || op.op !== "set" || typeof op.id !== "string" || !isRecord(op.patch)) continue;
-    covered.set(op.id, new Set([...(covered.get(op.id) ?? []), ...Object.keys(op.patch)]));
-  }
-  const out: unknown[] = [];
-  for (const next of updated) {
-    const prev = before.get(next.id);
-    if (!prev) continue;
-    const patch: Record<string, unknown> = {};
-    for (const k of GEOMETRY) {
-      if (covered.get(next.id)?.has(k)) continue;
-      const moved = JSON.stringify(prev[k]) !== JSON.stringify(next[k]);
-      if (moved || (POSITION.includes(k) && prev[k] !== undefined)) patch[k] = prev[k] ?? null;
-    }
-    if (Object.keys(patch).length > 0) out.push({ op: "set", id: next.id, patch });
-  }
-  return out;
+/** 操作を送った返事（applyOps の結果）のうち、「元に戻す」が読むもの */
+export interface Reply {
+  added: readonly El[];
+  updated: readonly El[];
+  removed: readonly El[];
+  /** 重なり順が変わったときだけ付く */
+  order?: unknown;
 }
 
 /**
- * 逆の操作から、もう無い要素への set と rm を除く。has は、その id の要素が今あるか。
- * WHY: 操作のまとまりは、1 つでも失敗すると全部が取りやめになる。
- * 逆の操作を積んだ後に、エージェントやほかの画面が要素を消していると、その要素の位置を戻す set のせいで、
- * 戻せるはずの残りまで戻らない。
+ * 送った操作（ops）を元に戻す、restore の操作を作る。戻すものが無ければ null。
+ * before は、送る直前の画面の要素（並びは重なり順）。reply は、サーバーの返事。
+ * origin は、ドラッグや大きさの変更で、手元の要素を先に書き換えていたときの、書き換える前の要素。
+ *
+ * 足された要素は消し、消えた要素は足し直し、変わった要素は、変わった項目を変える前の値にする。
+ * WHY 返事から作る: 送った項目だけから作ると、サーバーが足した変更（押し下げ、並べ直し、セクションの伸び、幅をそろえる）が戻らない。
+ * 戻す項目は、位置と大きさ、それに、送った set に書いた項目だけ。
+ * WHY 全部の項目を比べない: 手元の要素は、エージェントの変更が届く前の値のことがある。比べると、エージェントが直した文字まで戻す。
+ * 要素の並びは、消えた要素があるか、重なり順が変わったときに付ける。消えた要素を足し直すと、いちばん前面に入るため。
+ * members は、戻す要素に関わる、列で並べるセクションごとの、変える前の中身。
+ * WHY: 積んだ後にエージェントがセクションを変えていると、戻した要素の位置からは、どのセクションの中身だったかを読めない。
  */
-export function dropMissing(ops: readonly unknown[], has: (id: string) => boolean): unknown[] {
-  return ops.filter((op) => !(isRecord(op) && (op.op === "set" || op.op === "rm") && typeof op.id === "string" && !has(op.id)));
+export function restoreOp(before: ReadonlyMap<string, El>, ops: readonly unknown[], reply: Reply, origin: ReadonlyMap<string, El> = new Map()): Record<string, unknown> | null {
+  const written = new Map<string, Set<string>>();
+  for (const op of ops) {
+    if (!isRecord(op) || op.op !== "set" || typeof op.id !== "string" || !isRecord(op.patch)) continue;
+    written.set(op.id, new Set([...(written.get(op.id) ?? []), ...Object.keys(op.patch)]));
+  }
+  const updated = new Map(reply.updated.map((e) => [e.id, e]));
+  const set: { id: string; patch: Record<string, unknown> }[] = [];
+  for (const id of new Set([...updated.keys(), ...origin.keys()])) {
+    const was = origin.get(id) ?? before.get(id);
+    const now = updated.get(id) ?? before.get(id);
+    if (!was || !now) continue;
+    const prev: Record<string, unknown> = { ...was };
+    const next: Record<string, unknown> = { ...now };
+    const patch: Record<string, unknown> = {};
+    for (const k of new Set([...GEOMETRY, ...(written.get(id) ?? [])])) {
+      if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) patch[k] = prev[k] ?? null;
+    }
+    if (Object.keys(patch).length > 0) set.push({ id, patch });
+  }
+  const rm = reply.added.map((e) => e.id);
+  const add = [...reply.removed];
+  const order = add.length > 0 || reply.order !== undefined ? [...before.keys()] : [];
+  if ([set, rm, add, order].every((part) => part.length === 0)) return null;
+  const touched = new Set([...set.map((item) => item.id), ...add.map((e) => e.id)]);
+  const old = [...before.values()].map((e) => origin.get(e.id) ?? e);
+  const members: Record<string, string[]> = {};
+  for (const c of old) {
+    if (c.type !== "container" || c.cols === undefined) continue;
+    const ids = membersOf(old, c).flatMap((m) => (isSolid(m) ? [m.id] : []));
+    if (touched.has(c.id) || ids.some((id) => touched.has(id))) members[c.id] = ids;
+  }
+  return {
+    op: "restore",
+    ...(rm.length > 0 ? { rm } : {}),
+    ...(add.length > 0 ? { add } : {}),
+    ...(set.length > 0 ? { set } : {}),
+    ...(order.length > 0 ? { order } : {}),
+    ...(Object.keys(members).length > 0 ? { members } : {}),
+  };
 }

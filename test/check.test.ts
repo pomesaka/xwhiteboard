@@ -485,11 +485,18 @@ describe("セクションの論点と結論", () => {
 });
 
 describe("列で並べるセクションの中の、別のセクション", () => {
+  test("中心が、列で並べるセクションの枠の中にある（今は操作が断る置き方。前に書かれたボードに残っている）", () => {
+    const board = applyOps(emptyDoc("t"), outer({ cols: 2 }));
+    const nested = applyOps(emptyDoc("t"), [inner(280)]);
+    if (!board.ok || !nested.ok) throw new Error("ボードを作れない");
+    const doc = { ...board.value.doc, elements: [...board.value.doc.elements, ...nested.value.doc.elements] };
+    expect(checkBoard(doc).map((i) => `${i.kind}:${i.ids.join(",")}`)).toEqual(["nested-section:in,s"]);
+  });
+
   const outer = (extra: Record<string, unknown>) => [add({ id: "s", type: "container", x: 0, y: 0, w: 504, h: 186, ...extra }), { op: "add", in: "s", el: { id: "a", type: "shape", text: "付箋" } }];
   // 付箋 a（左の列）にかからない、右の列の空いた場所に置く
   const inner = (x: number) => add({ id: "in", type: "container", x, y: 70, w: 150, h: 70 });
   test.each([
-    ["中心が、列で並べるセクションの枠の中にある", [...outer({ cols: 2 }), inner(280)], ["nested-section:in,s"]],
     ["自由に置くセクションの中のセクションは、知らせない", [...outer({}), inner(280)], []],
     ["列で並べるセクションの外にあるセクションは、知らせない", [...outer({ cols: 2 }), inner(600)], []],
   ])("%s", (_name, ops, expected) => {
