@@ -29,7 +29,7 @@ const NODE_GAP_X = 70;
 const MAX_TREE_NODES = 40;
 
 /** 付箋に渡せる項目。場所と大きさは、型が決める */
-const NOTE_KEYS = ["text", "title", "who", "status", "carriedFrom", "tag", "color"];
+const NOTE_KEYS = ["text", "title", "who", "status", "carriedFrom", "due", "tag", "color"];
 
 type Ops = Record<string, unknown>[];
 
@@ -42,7 +42,7 @@ interface Cell {
 /** 付箋 1 枚ぶんの中身。文字だけなら本文、オブジェクトなら付箋の欄 */
 function parseItem(raw: unknown, where: string): Res<Record<string, unknown>> {
   if (typeof raw === "string") return { ok: true, value: { text: raw } };
-  if (!isRecord(raw)) return fail(`${where} は、文字か、付箋の欄（title・text・who・status・carriedFrom・tag・color）のオブジェクト`);
+  if (!isRecord(raw)) return fail(`${where} は、文字か、付箋の欄（title・text・who・status・carriedFrom・due・tag・color）のオブジェクト`);
   for (const k of Object.keys(raw)) if (!NOTE_KEYS.includes(k)) return fail(`${where} に ${k} は書けない。場所と大きさは型が決める。書ける項目: ${NOTE_KEYS.join(", ")}`);
   if (raw.text === undefined && raw.title === undefined) return fail(`${where} には text か title が要る`);
   return { ok: true, value: raw };

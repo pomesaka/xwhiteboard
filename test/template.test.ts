@@ -11,7 +11,7 @@ const matrix = {
   xAxis: { label: "やり方を知っているか", low: "知らない", high: "知っている" },
   yAxis: { label: "共感しているか", low: "していない", high: "している" },
   cells: [
-    [cell("教える", ["営業の 2 人", { title: "新人", text: "研修から", who: "山田", status: "priority" }, { text: "総務", color: "green" }]), cell("任せる", ["開発"])],
+    [cell("教える", ["営業の 2 人", { title: "新人", text: "研修から", who: "山田", status: "priority" }, { text: "総務", color: "green" }]), cell("任せる", [{ text: "開発", due: "2026-11-20" }])],
     [cell("後回し"), cell("話を聞く", ["経理"])],
   ],
 };
@@ -67,6 +67,7 @@ describe("型は、ふつうの要素に展開される", () => {
     ["縦の軸の low", "mx-yl", { text: "**していない**" }],
     ["縦の軸の high", "mx-yh", { text: "**している**" }],
     ["付箋の欄は、そのまま付箋に入る", "mx-tl-2", { title: "新人", text: "研修から", who: "山田", status: "priority" }],
+    ["期限（due）も、付箋の欄として入る", "mx-tr-1", { text: "開発", due: "2026-11-20" }],
     ["色を書かない付箋は白", "mx-tl-1", { text: "営業の 2 人", color: "white" }],
     ["色を書いた付箋は、その色", "mx-tl-3", { text: "総務", color: "green" }],
   ])("matrix の中身: %s", (_name, id, expected) => {

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
-import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
+import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, localDay, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
 import { checkBoard } from "../shared/check.ts";
 import { resolveBoardRef } from "../shared/rich.ts";
 import { shoot } from "./shot.ts";
@@ -317,7 +317,7 @@ export async function startServer(port: number): Promise<void> {
       }
       case "GET /api/check": {
         const board = getBoard(boardPath(q.get("board")));
-        return json({ issues: checkBoard(board.doc, { boardExists: (ref) => existsSync(resolveBoardRef(board.path, ref)) }) });
+        return json({ issues: checkBoard(board.doc, { boardExists: (ref) => existsSync(resolveBoardRef(board.path, ref)), today: localDay(new Date()) }) });
       }
       case "GET /api/changes":
         // 人がブラウザで変えて、まだ読み終えたことにしていない要素。読むだけでは消さない（議事録を書き直すときに読み直せるように）

@@ -1,4 +1,4 @@
-import { ALIGNS, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, TABLE_COL, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
+import { ALIGNS, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, TABLE_COL, isOverdue, localDay, metaParts, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
 
 import { LABEL_LIFT, arrowPath, labelSpot, routeArrow, type RouteEnd } from "../shared/route.ts";
 import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
@@ -425,13 +425,13 @@ function renderEl(el: El): void {
         n.append(shp);
       }
       const body = div("body");
-      // 札の段（左から、状態の札、tag。右端に発言者）、見出し、本文の順に積む
-      const badge = statusBadge(el);
-      if (badge || el.tag || el.who) {
+      // 札の段（並ぶ順は metaParts。CSS が、期限と発言者を右端に寄せる）、見出し、本文の順に積む
+      const parts = metaParts(el);
+      if (parts.length > 0) {
         const meta = div("meta");
-        if (badge) meta.append(div(`st st-${badge.status}`, badge.label));
-        if (el.tag) meta.append(div("tag", el.tag));
-        if (el.who) meta.append(div("who", el.who));
+        // WHY 書き出しの画面では期限切れの色を付けない: 書き出しは、同じボードなら同じバイト列になる。日付で変わると、前後の比較に使えない
+        const overdue = !exporting && isOverdue(el, localDay(new Date()));
+        for (const p of parts) meta.append(div(p.kind === "status" ? `st st-${p.status}` : p.kind === "due" && overdue ? "due overdue" : p.kind, p.text));
         body.append(meta);
       }
       if (el.title) body.append(div("ntitle", el.title));
@@ -1300,13 +1300,13 @@ function renderBar(): void {
     // 形は数が多いので、ボタンを並べずに一覧から選ぶ
     add(
       picker("形", SHAPES, SHAPE_LABEL, shared(shapes.map((e) => e.shape ?? "note")), (v) => patchAll(["shape"], { shape: v })),
-      // 状態を外すときは、持ち越しの日付も消す（日付だけが残ると、持ち越しの札が出続ける）
-      picker("状態", STATUS_OPTIONS, STATUS_OPTION_LABEL, shared(shapes.map((e) => statusBadge(e)?.status ?? "none")), (v) => patchAll(["shape"], v === "none" ? { status: null, carriedFrom: null } : v === "carried" ? { status: v } : { status: v, carriedFrom: null })),
+      // 状態を外すときは、持ち越しの日付も消す（日付だけが残ると、持ち越しの札が出続ける）。持ち越しと宿題のほかの状態は、日付と一緒に書けない
+      picker("状態", STATUS_OPTIONS, STATUS_OPTION_LABEL, shared(shapes.map((e) => statusBadge(e)?.status ?? "none")), (v) => patchAll(["shape"], v === "none" ? { status: null, carriedFrom: null } : v === "carried" || v === "todo" ? { status: v } : { status: v, carriedFrom: null })),
       button("塗りなし", all((e) => e.hollow === true), () => patchAll(["shape"], { hollow: all((e) => e.hollow === true) ? null : true })),
       button("点線", all((e) => e.dashed === true), () => patchAll(["shape"], { dashed: all((e) => e.dashed === true) ? null : true })),
     );
     // 見出しの無い付箋には、ダブルクリックで直す先が無いので、ここから足す
-    if (sel.length === 1 && first?.type === "shape") add(button("見出し", false, () => editNoteTitle(first), "見出しを書く（空にすると消える）"));
+    if (sel.length === 1 && first?.type === "shape") add(button("見出し", false, () => editNoteTitle(first), "見出しを書く（空にすると消える）"), button("期限", false, () => editNoteDue(first), "宿題の期限を書く（空にすると消える）"));
   }
   if (has("text") || has("shape")) {
     // 文字の大きさと寄せ。文字（text）と図形の両方に効く
@@ -1387,6 +1387,13 @@ function editSectionField(el: El, key: "question" | "answer"): void {
 function editNoteTitle(el: El): void {
   const v = prompt("付箋の見出し", el.title ?? "");
   if (v !== null) void setOps([{ id: el.id, patch: { title: v === "" ? null : v } }]);
+}
+
+/** 付箋の期限を、人が足すか直す。空にすると消す。日付でない入力は、サーバーが断った理由が知らせに出る */
+function editNoteDue(el: El): void {
+  // WHY 期限が無ければ今日を入れておく: 年から打たずに、日を直すだけで済む
+  const v = prompt("期限（YYYY-MM-DD。空にすると消える）", el.due ?? localDay(new Date()));
+  if (v !== null) void setOps([{ id: el.id, patch: { due: v.trim() === "" ? null : v.trim() } }]);
 }
 
 /** 選んだ要素を、前面か背面へ動かす */

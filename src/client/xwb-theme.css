@@ -73,8 +73,13 @@
   /* 付箋の状態の札。白い文字を載せるので、付箋の濃い色（ink）を面にする */
   --status-decided: var(--note-green-ink);
   --status-open: var(--note-orange-ink);
+  --status-todo: var(--note-blue-ink);
   --status-carried: var(--note-purple-ink);
   --status-priority: var(--note-red-ink);
+  /* 期限を過ぎた付箋の、期限の文字 */
+  --status-overdue: var(--note-red-ink);
+  /* 濃い色（ink）の箱の上では、明るい赤にする */
+  --status-overdue-on-dark: var(--note-red-border);
 
   /* ガント */
   --gantt-mark: var(--destructive);

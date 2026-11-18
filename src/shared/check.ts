@@ -1,6 +1,6 @@
 // ボードの見た目の問題を、描かずに測る。エージェントが、スクショを見なくても崩れに気づけるようにする。
 // 文字と表の大きさは見積もり（model.ts の sizeOf）なので、画面で測った値とは数 px ずれる。
-import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type Point, type ShapeKind } from "./model.ts";
+import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_STATUS, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, isOverdue, metaParts, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type MetaPart, type Point, type ShapeKind } from "./model.ts";
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
@@ -44,6 +44,8 @@ export type IssueKind =
   | "long-title"
   /** 付箋の札の段（状態の札、tag、発言者）が 1 段に入りきらず、tag か発言者が「…」で切れる */
   | "meta-overflow"
+  /** 付箋の期限（due）を過ぎている */
+  | "overdue"
   /** セクションに論点（question）があって、結論（answer）が無い */
   | "open-question"
   /** 列で並べるセクション（cols）の中に、別のセクションがある */
@@ -103,6 +105,8 @@ const MIN_COL_W = 120;
 export interface CheckContext {
   /** ほかのボードへのリンクの行き先（相対パス）に、ファイルがあるか */
   boardExists?: (ref: string) => boolean;
+  /** 今日の日付（YYYY-MM-DD）。期限切れ（overdue）を見るのに使う */
+  today?: string;
 }
 
 /**
@@ -116,6 +120,17 @@ const HANDWRITTEN_STATUS = new RegExp(`^\\s*(?:${Object.values(STATUS_LABEL).map
  * WHY 区切りか行の全体を求める: 「4/1 から新体制で始める」「2/3 から 3/4 に上げる」のような、ふつうの文の日付や分数は持ち越しではない。
  */
 const HANDWRITTEN_CARRIED = /(?:[·・→（(]\s*\d+\/\d+\s*から|^\s*\d+\/\d+\s*から\s*$)/m;
+
+/**
+ * 手で書いた期限。次の 2 つの形を、1 行の中で拾う（札と、本文の各行を、別々に見る）。
+ * - 期限を表す語（期限、締切、締め切り、〆切、〆）のすぐ後ろの日付。間は、空白、「:」、「は」だけ
+ * - 日付のすぐ後ろの「までに」「迄に」「締切」「締め切り」「〆切」「〆」「期限」。間は、空白だけ
+ * 日付は「M/D」「M月D日」「YYYY-MM-DD」「YYYY/M/D」。後ろに曜日（「(金)」）が付いてもよい。
+ * WHY 狭く拾う: 知らせに従うと、日付を due に書いて本文から消す。期限でない文を拾うと、文を言い換えるほかに知らせを消せない。見逃すほうを取る。
+ * 日付だけ（「11/20 の定例」）、「まで」だけ（「1/2 まで減らす」「11/20 までの売上」）、「無期限」、行をまたぐ形は拾わない
+ */
+const DAY = "(?:\\d{4}-\\d{1,2}-\\d{1,2}|(?:\\d{4}/)?\\d{1,2}/\\d{1,2}|\\d{1,2}月\\d{1,2}日)(?:[ \\t　]*[（(][月火水木金土日][）)])?";
+const HANDWRITTEN_DUE = new RegExp(`(?<!無)(?:期限|締切|締め切り|〆切|〆)[ \\t　:：は]*${DAY}|${DAY}[ \\t　]*(?:までに|迄に|締切|締め切り|〆切|〆|期限)`);
 
 const round = (n: number): number => Math.round(n);
 
@@ -219,17 +234,14 @@ function titleLines(el: El): number {
 }
 
 /**
- * 付箋の札の段（状態の札、tag、発言者）を 1 段に並べたときの幅。札が無ければ 0。
+ * 付箋の札の段（状態の札、tag、期限、発言者）を 1 段に並べたときの幅。札が無ければ 0。
  * 文字の幅は見積もり（boldWidth）で、半角は広めに数える。多めに出るぶんには、札を短くすれば済む
  */
 function metaWidth(el: El): number {
-  const badge = statusBadge(el);
-  const parts = [
-    ...(badge ? [boldWidth(badge.label, META_FONT) + META_PILL_PAD] : []),
-    ...(el.tag ? [boldWidth(el.tag, META_FONT) + [...el.tag].length * META_TAG_SPACING * META_FONT] : []),
-    ...(el.who ? [boldWidth(el.who, META_FONT) + META_PILL_PAD] : []),
-  ];
-  return parts.reduce((sum, w) => sum + w, 0) + Math.max(0, parts.length - 1) * META_GAP;
+  // 状態の札と発言者は札の形で、左右に余白がある。tag は字の間が空く。期限は文字だけ
+  const extra = (p: MetaPart): number => (p.kind === "status" || p.kind === "who" ? META_PILL_PAD : p.kind === "tag" ? [...p.text].length * META_TAG_SPACING * META_FONT : 0);
+  const parts = metaParts(el);
+  return parts.reduce((sum, p) => sum + boldWidth(p.text, META_FONT) + extra(p), 0) + Math.max(0, parts.length - 1) * META_GAP;
 }
 
 /** 図形の文字が収まる、いちばん大きい文字の大きさ。いちばん小さくしても収まらなければ null */
@@ -238,7 +250,7 @@ function fittedFont(el: El): number | null {
   // 本文が空なら、行は無い（見出しだけの付箋）
   const lines = el.text ? plainText(el.text).split("\n") : [];
   const heading = titleLines(el);
-  const room = inner.h - (statusBadge(el) || el.tag || el.who ? META_H : 0) - (heading > 0 ? heading * NOTE_TITLE_FONT * LINE + 2 : 0);
+  const room = inner.h - (metaParts(el).length > 0 ? META_H : 0) - (heading > 0 ? heading * NOTE_TITLE_FONT * LINE + 2 : 0);
   for (let px = el.size ? FONT[el.size] : el.title ? NOTE_SUB_FONT : SHAPE_FONT; px >= MIN_FONT; px--) {
     const count = lines.reduce((n, l) => n + Math.max(1, Math.ceil(textWidth(l, px) / Math.max(px, inner.w))), 0);
     if (count * px * LINE <= room) return px;
@@ -456,10 +468,19 @@ export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
     if (el.type !== "shape") continue;
     // 付箋の欄。手で書いた見出し・状態・持ち越しの日付は、欄に書けば、見た目がそろい、検査と一覧で読める
     if (!el.title && /^\*\*[^*\n]+\*\*\n/.test(el.text ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の 1 行めの太字は、見出しとして title に書く（本文は text に残す）` });
+    // WHY due があっても見る: 本文に期限が残っていると、期限を消した（終わった）ときに、もう一度「due に書く」と知らせることになる
+    const handDue = [el.tag ?? "", ...plainText(el.text ?? "").split("\n")].flatMap((line) => HANDWRITTEN_DUE.exec(line)?.[0] ?? [])[0];
+    if (handDue !== undefined) {
+      const fix = el.due === undefined ? "due に YYYY-MM-DD で書く（札の段に「〆11/20」の形で出る）。本文や札の期限は消す" : "due に書いてあるので、本文や札から消す（札の段と二重に出る）";
+      issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の期限（「${handDue}」）は、${fix}` });
+    }
+    if (ctx.today !== undefined && isOverdue(el, ctx.today)) {
+      issues.push({ kind: "overdue", ids: [el.id], message: `${el.id} の期限（${el.due}）を過ぎている。終わったなら due を消す（null）か、付箋を消す。延ばすなら due を直す` });
+    }
     if (el.carriedFrom === undefined && HANDWRITTEN_CARRIED.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
-    if (el.status === undefined && HANDWRITTEN_STATUS.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（decided・open・carried・priority）。発言者は who に書く` });
+    if (el.status === undefined && HANDWRITTEN_STATUS.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（${NOTE_STATUS.join("・")}）。発言者は who に書く` });
     const metaOver = round(metaWidth(el) - innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0).w);
-    if (metaOver > 0) issues.push({ kind: "meta-overflow", ids: [el.id], message: `${el.id} の札の段（状態の札、tag、who）が 1 段に入りきらず、tag か who が「…」で切れる（${metaOver} はみ出す）。tag を短くするか省く、who を短くする、w を増やす`, w: metaOver });
+    if (metaOver > 0) issues.push({ kind: "meta-overflow", ids: [el.id], message: `${el.id} の札の段（状態の札、tag、期限、who）が 1 段に入りきらず、tag か who が切れる（${metaOver} はみ出す）。状態の札と期限は縮まない。tag を短くするか省く、who を短くする、w を増やす`, w: metaOver });
     if (titleLines(el) > 1) issues.push({ kind: "long-title", ids: [el.id], message: `${el.id} の見出し（title）が 1 行に入らない。短くして、残りは text に書く`, px: titleLines(el) });
     if (!el.text && !el.title) continue;
     const px = fittedFont(el);

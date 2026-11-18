@@ -14,9 +14,9 @@ export const ALIGNS = ["left", "center", "right"] as const;
 export const HEADS = ["end", "start", "both", "none"] as const;
 export const ROUTES = ["straight", "elbow"] as const;
 /** 付箋の状態。決定、未決、持ち越し、優先 */
-export const NOTE_STATUS = ["decided", "open", "carried", "priority"] as const;
+export const NOTE_STATUS = ["decided", "open", "todo", "carried", "priority"] as const;
 export type NoteStatus = (typeof NOTE_STATUS)[number];
-export const STATUS_LABEL: Record<NoteStatus, string> = { decided: "決定", open: "未決", carried: "持ち越し", priority: "優先" };
+export const STATUS_LABEL: Record<NoteStatus, string> = { decided: "決定", open: "未決", todo: "宿題", carried: "持ち越し", priority: "優先" };
 /** 矢印の端の形。矢じり、丸、無し */
 export const END_MARKS = ["arrow", "dot", "none"] as const;
 export type EndMark = (typeof END_MARKS)[number];
@@ -109,6 +109,8 @@ export interface El {
   status?: NoteStatus;
   /** 持ち越しの元の会議の日付。札に「持ち越し 11/11」と出す。本文に日付を書かないので、同じ日付の繰り返しの検査にかからない */
   carriedFrom?: string;
+  /** 付箋と図形の、宿題の期限。YYYY-MM-DD か YYYY-MM。札の段に「〆11/20」と出す */
+  due?: string;
   /** セクションの中身を、この列の数で詰めて並べる。書くと、中身の位置と幅、セクションの高さを xwb が決める */
   cols?: number;
 }
@@ -155,7 +157,7 @@ export const GAP = 16;
 export const OUTER_GAP = 60;
 
 const FIELDS: Record<ElType, readonly string[]> = {
-  shape: ["x", "y", "w", "h", "text", "title", "who", "status", "carriedFrom", "tag", "color", "shape", "size", "align", "border", "hollow", "dashed"],
+  shape: ["x", "y", "w", "h", "text", "title", "who", "status", "carriedFrom", "due", "tag", "color", "shape", "size", "align", "border", "hollow", "dashed"],
   container: ["x", "y", "w", "h", "title", "question", "answer", "color", "cols"],
   text: ["x", "y", "w", "text", "size", "align", "color"],
   arrow: ["from", "to", "label", "dashed", "heads", "color", "route", "fromSide", "toSide", "bends", "startHead", "endHead"],
@@ -265,6 +267,10 @@ export function parseEl(raw: unknown): Res<El> {
       case "carriedFrom":
         if (typeof v !== "string" || parseDay(v, false) === null) return fail("carriedFrom は YYYY-MM-DD か YYYY-MM の日付");
         el.carriedFrom = v;
+        break;
+      case "due":
+        if (typeof v !== "string" || parseDay(v, false) === null) return fail("due は YYYY-MM-DD か YYYY-MM の日付");
+        el.due = v;
         break;
       case "cols":
         if (!isNum(v) || !Number.isInteger(v) || v < 1 || v > MAX_COLS) return fail(`cols は 1〜${MAX_COLS} の整数`);
@@ -439,21 +445,68 @@ export function parseEl(raw: unknown): Res<El> {
   for (const k of REQUIRED[type]) {
     if (raw[k] === undefined) return fail(`${type} には ${k} が要る`);
   }
-  if (el.carriedFrom !== undefined && el.status !== undefined && el.status !== "carried") return fail("carriedFrom を書くなら、status は carried か、書かない");
+  if (el.carriedFrom !== undefined && el.status !== undefined && el.status !== "carried" && el.status !== "todo") return fail("carriedFrom を書くなら、status は carried か todo か、書かない");
   if (type === "image" && (el.src === undefined) === (el.svg === undefined)) return fail("image には src か svg のどちらか 1 つを書く");
   return ok(el);
 }
 
 /**
  * 付箋の状態の札に出す文字。状態が無ければ null。持ち越しには、元の日付を付ける（「持ち越し 11/11」。月までの日付は「持ち越し 11月」）。
- * WHY 短く書く: 札の段は 1 段で、tag と発言者も同じ段に並ぶ。「持ち越し · 11/11 から」と書くと、幅 220 の付箋で発言者が切れる
+ * 持ち越しの宿題（status が todo で、carriedFrom がある）は、1 つの札に「宿題11/11から」と出す。
+ * WHY 短く書く: 札の段は 1 段で、tag と期限と発言者も同じ段に並ぶ。「持ち越し · 11/11 から」と書くと、幅 220 の付箋で発言者が切れる。
+ * 宿題と持ち越しを 2 つの札に分けると、期限と発言者が入らない
  */
 export function statusBadge(el: El): { status: NoteStatus; label: string } | null {
   const status = el.status ?? (el.carriedFrom === undefined ? undefined : "carried");
   if (status === undefined) return null;
   const [, month, day] = (el.carriedFrom ?? "").split("-").map(Number);
-  const from = month === undefined ? "" : day === undefined ? ` ${month}月` : ` ${month}/${day}`;
+  const date = month === undefined ? "" : day === undefined ? `${month}月` : `${month}/${day}`;
+  const from = date === "" ? "" : status === "todo" ? `${date}から` : ` ${date}`;
   return { status, label: STATUS_LABEL[status] + from };
+}
+
+/**
+ * 付箋の札の段に出す、期限の文字。期限が無ければ null。年は出さない（「〆11/20」。月までの期限は「〆11月」）。
+ * WHY 「〆」の 1 文字: 日付だけだと、持ち越しの札の日付や会議の日付と見分けられない。札の段は 1 段で幅がきつく、
+ * 「期限 11/20」と書くと、幅 220 の付箋で「持ち越し 11/11」と発言者の札と並ばない
+ */
+export function dueLabel(el: El): string | null {
+  if (el.due === undefined) return null;
+  const [, month, day] = el.due.split("-").map(Number);
+  return day === undefined ? `〆${month}月` : `〆${month}/${day}`;
+}
+
+/** 付箋の札の段に並ぶ部品。status は、状態の札の色を決める状態 */
+export type MetaPart = { kind: "status"; text: string; status: NoteStatus } | { kind: "tag" | "due" | "who"; text: string };
+
+/**
+ * 付箋の札の段に、左から並ぶ部品。状態の札、tag、期限、発言者の順。何も無ければ、段そのものが出ない。
+ * WHY 1 か所で決める: 画面（描く）と検査（幅と高さを見積もる）が別々に並べると、欄を足したときに片方だけ変わる
+ */
+export function metaParts(el: El): MetaPart[] {
+  const badge = statusBadge(el);
+  const due = dueLabel(el);
+  return [
+    ...(badge ? [{ kind: "status" as const, text: badge.label, status: badge.status }] : []),
+    ...(el.tag ? [{ kind: "tag" as const, text: el.tag }] : []),
+    ...(due ? [{ kind: "due" as const, text: due }] : []),
+    ...(el.who ? [{ kind: "who" as const, text: el.who }] : []),
+  ];
+}
+
+/** その場所の時計での日付（YYYY-MM-DD）。期限切れを決める「今日」に使う */
+export function localDay(now: Date): string {
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+}
+
+/**
+ * 期限を過ぎているか。today は YYYY-MM-DD。期限の日は、まだ過ぎていない。月までの期限は、その月が終わるまで過ぎていない。
+ * 状態には関わらない。終わった宿題は、期限（due）か付箋を消す
+ */
+export function isOverdue(el: El, today: string): boolean {
+  if (el.due === undefined) return false;
+  return el.due < today.slice(0, el.due.length);
 }
 
 /** セクションの論点と結論の文字の大きさ。画面の CSS（.container .sq と .sa）と同じ値 */
@@ -1026,7 +1079,7 @@ export interface CommentPayload {
   elements: Record<string, unknown>[];
 }
 
-const TEXT_FIELDS = ["text", "tag", "title", "question", "answer", "who", "status", "carriedFrom", "label", "head", "rows", "color", "shape", "bars", "marks"] as const;
+const TEXT_FIELDS = ["text", "tag", "title", "question", "answer", "who", "status", "carriedFrom", "due", "label", "head", "rows", "color", "shape", "bars", "marks"] as const;
 
 function briefOf(el: El): Record<string, unknown> {
   const rec: Record<string, unknown> = { ...el };

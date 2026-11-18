@@ -66,6 +66,8 @@ playwright-cli -s=xwbv close >/dev/null
 - 道具は`#tools button[data-tool=note]`など。表示の操作は`#fit`（全体）、`#undo`（戻す）、`#png`。
 - 画面どうしの同期（注目、人とエージェントが同時に触る流れ）は、セッションの名前を変えて画面を2つ開く（`-s=xwbv1`と`-s=xwbv2`）。
 - `run-code`が文字列を返すと、結果の行は引用符とエスケープが付いて出る。
+- 入力のダイアログ（選択バーの「見出し」「期限」「論点」「結論」の`prompt`）は、`run-code`の中で`page.on('dialog')`で答えると、次の`run-code`が`does not handle the modal state`で止まる。ボタンのクリックを待たずに`run-code`を終え（`page.click(...)`を`await`しない）、別の呼び出しで`playwright-cli -s=<名前> dialog-accept "<値>"`を打つ。取り消しは`dialog-dismiss`。
+- `playwright-cli`のセッションは、開いたフォルダごとに分かれる。`close`を別のフォルダで打つと`Browser '…' is not open`と返って閉じない。開いたフォルダ（`$DIR`）で打つ。
 - 画面の状態とボードのファイルの両方を見る。画面だけが正しい、ファイルだけが正しい、のどちらもありうる。
 
 ## つつく価値のある流れ
