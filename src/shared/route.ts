@@ -59,7 +59,7 @@ function edgePoint(end: RouteEnd, toward: Point): Point {
 }
 
 /** 相手のいる向きの辺 */
-function facing(from: Point, to: Point): Side {
+export function facing(from: Point, to: Point): Side {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "right" : "left";

@@ -2,6 +2,7 @@
 // サーバー、CLI、ブラウザ、変換が同じ規則で要素を検証できるよう、ここだけに置く。
 import { GANTT_STATUS, GANTT_UNITS, ganttLayout, parseDay, type GanttBar, type GanttMark, type GanttSegment, type GanttUnit } from "./gantt.ts";
 import { isBoardRef, plainText } from "./rich.ts";
+import { formatOp } from "./format.ts";
 import { expandTemplate } from "./template.ts";
 import { SIDES, type Side } from "./route.ts";
 
@@ -804,6 +805,15 @@ function insideOf(els: Iterable<El>, container: El): El[] {
   return out;
 }
 
+/**
+ * セクションを動かすときに、一緒に動かす要素。枠の中に中心がある要素の全部と、中のセクションの中身。
+ * 列で並べるセクションを set で動かすときと、並べ直し（format）が、同じ決まりで連れていく
+ */
+export function ridersOf(els: readonly El[], section: El): El[] {
+  const within = insideOf(els, section);
+  return [...new Set([...within, ...within.filter((n) => n.type === "container").flatMap((n) => membersOf(els, n))])];
+}
+
 export function shifted(el: El, dx: number, dy: number): El {
   const move = (p: Point): Point => [p[0] + dx, p[1] + dy];
   const end = (e: End | undefined): End | undefined => (e === undefined || typeof e === "string" ? e : move(e));
@@ -1227,7 +1237,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
    */
   const readsLayout = (op: Record<string, unknown>): boolean => {
     // 型は、場所を書かなければ、全体の右に置く
-    if (op.op === "compact" || op.op === "template") return true;
+    if (op.op === "compact" || op.op === "template" || op.op === "format") return true;
     // cols を外すと、in で足した要素を並べる機会が無くなる
     if (op.op === "set") return isRecord(op.patch) && op.patch.cols === null;
     if (op.op !== "add" || !isRecord(op.el)) return false;
@@ -1388,8 +1398,8 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         // WHY: 中身を置き去りにすると、並べ直しが、空のセクションと読んで畳む。
         // WHY このまとまりでもう動かした要素は連れていかない: 画面は、選んだ順に、セクションと中身を絶対座標の set で送る。中身の set が先に来ると、2 回動く。
         // セクションを 2 つ動かすと、先のセクションが連れていった中身が、後のセクションの動かす前の枠に入って、2 回動く
-        const within = moved && el.type === "container" && el.cols !== undefined ? insideOf(doc.elements, el) : [];
-        const riders = new Set([...within, ...within.filter((n) => n.type === "container").flatMap((n) => membersOf(doc.elements, n))].map((e) => e.id).filter((id) => !relocated.has(id)));
+        const within = moved && el.type === "container" && el.cols !== undefined ? ridersOf(doc.elements, el) : [];
+        const riders = new Set(within.map((e) => e.id).filter((id) => !relocated.has(id)));
         replace(r.value);
         touch(el.id);
         if (moved) {
@@ -1460,6 +1470,18 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
             replace(shifted(el, 0, -shift));
             touch(id);
           }
+        }
+        break;
+      }
+      case "format": {
+        // セクションとまとめの帯を、詰めて置き直す。置き場所は shared/format.ts が決める。ここは、その結果を書くだけ。
+        // 動かした要素は、場所を書いた要素（placed）に入れない。WHY: 列で並べるセクションは中身ごと同じだけ動くので、並ぶ順を位置から読み直す理由が無い
+        const plan = formatOp(doc.elements, op);
+        if (!plan.ok) return fail(`${at}: ${plan.error}`);
+        for (const el of plan.value.moved) {
+          replace(el);
+          touch(el.id);
+          if (el.type === "container") sited.set(el.id, at);
         }
         break;
       }
@@ -1590,7 +1612,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         break;
       }
       default:
-        return fail(`${at}: op は add | set | rm | title | say | order | compact | template のどれか`);
+        return fail(`${at}: op は add | set | rm | title | say | order | compact | template | format のどれか`);
     }
   }
 

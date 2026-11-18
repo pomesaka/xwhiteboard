@@ -33,7 +33,7 @@ CLI（src/cli.ts）──HTTP──┐
 チャネル（src/channel.ts）──HTTP──┘
 ```
 
-- **`src/shared/model.ts`がデータの形と操作の唯一の置き場**。要素の検証（`parseEl`）と、操作の適用（`applyOps`。`add`・`set`・`rm`・`say`・`order`・`compact`・`title`・`template`と、画面の「元に戻す」だけが使う`restore`）がここにある。サーバーもCLIもブラウザも、これを通して同じ規則で読み書きする。項目を足すときは、`El`、`FIELDS`、`parseEl`の3か所を直す。
+- **`src/shared/model.ts`がデータの形と操作の唯一の置き場**。要素の検証（`parseEl`）と、操作の適用（`applyOps`。`add`・`set`・`rm`・`say`・`order`・`compact`・`format`・`title`・`template`と、画面の「元に戻す」だけが使う`restore`）がここにある。サーバーもCLIもブラウザも、これを通して同じ規則で読み書きする。項目を足すときは、`El`、`FIELDS`、`parseEl`の3か所を直す。
 - **書き込みは必ずサーバーの`commitOps`を通る**。操作を適用し、ファイルに書き、SSEで開いている画面へ流す。ブラウザは、自分の操作の結果もサーバーの返事（`added`・`updated`・`removed`）から反映する。押し下げや並べ直しのようにサーバーが足した変更も、この返事で届く。同じ変更はSSEでも届き、返事より先に手元の状態へ入ることがある。「変える前の値」が要る処理（取り消し用の逆の操作）は、送る直前に写しを取る。
 - **画面の「元に戻す」は、逆の操作でなく`restore`を送る**。変える前の形（`src/shared/restore.ts`の`restoreOp`が、サーバーの返事と、送る直前の写しから作る）をそのまま書き戻す。押し下げや、中身を連れていく規則は働かせず、その後に並べ直しだけをかける。配置の規則が働く`set`で戻すと、規則を打ち消す条件が直すたびに増える。画面が送る形の操作と「元に戻す」の往復は、`test/fuzz.test.ts`が乱数で確かめる（`XWB_FUZZ_SEEDS=3000 bun test test/fuzz.test.ts`で回数を増やせる）。
 - **人の変更とエージェントの変更は、`client`を名乗るかで分ける**。ブラウザは名乗り、CLIは名乗らない。人の変更だけが`pending`に記録され、エージェントが`xwb changes`で読む。

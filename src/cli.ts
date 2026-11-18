@@ -6,6 +6,7 @@ import { convertLegacy, readLegacy } from "./convert.ts";
 import { api, ensureServer, ping, port } from "./local.ts";
 import { BOARD_EXT, DEFAULT_PORT, startServer } from "./server/server.ts";
 import { loadToken } from "./server/token.ts";
+import { FORMAT_MAX_COLS } from "./shared/format.ts";
 import { boxOf, isRecord, parseEl, serialize } from "./shared/model.ts";
 import { itemsOf, summarize, withSummaryHeights } from "./shared/summary.ts";
 
@@ -26,6 +27,7 @@ const USAGE = `xwb: ローカルで動くホワイトボード
   xwb check <board>                             見た目の問題（重なり、はみ出し、矢印の突き抜けなど）の一覧
   xwb template <board> [json|-]                 型（matrix・versus・tree）を、中身のデータから描く
   xwb compact <board> [--fit]                   空いた段を上へ詰める（--fit で、セクションも中身の高さまで低くする）
+  xwb format <board> [--cols 2] [--dry-run]     セクションとまとめの帯を、詰めて並べ直す（--dry-run で、動かさずに、動く要素だけを返す）
   xwb order <board> <id> front|back           要素を前面か背面へ動かす
   xwb changes <board> [--clear]                人がブラウザで変えた要素の一覧（--clear で、一覧を返して消す）
   xwb reply <board> <コメントの id> <本文>       コメントに返事を書く
@@ -46,7 +48,7 @@ class CliError extends Error {}
 function parseArgs(argv: string[]): { pos: string[]; flags: Map<string, string> } {
   const pos: string[] = [];
   const flags = new Map<string, string>();
-  const bool = new Set(["--no-open", "--force", "--help", "--comments", "--reopen", "--clear", "--fit"]);
+  const bool = new Set(["--no-open", "--force", "--help", "--comments", "--reopen", "--clear", "--fit", "--dry-run"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
     if (a === "-o") flags.set("--out", argv[++i] ?? "");
@@ -177,6 +179,17 @@ async function main(): Promise<void> {
     }
     case "compact": {
       const res = await call("/api/ops", { board: boardArg(pos[0]), ops: [{ op: "compact", fit: flags.has("--fit") }] });
+      // 動いた要素は多いので、id だけを返す
+      print(isRecord(res) && Array.isArray(res.updated) ? { moved: res.updated.map((e) => (isRecord(e) ? e.id : e)) } : res);
+      return;
+    }
+    case "format": {
+      // 列の数が数でなければ、ここで断る（JSON に載せられない）。範囲は、操作（applyOps の format）が見る
+      const given = flags.get("--cols");
+      const cols = given === undefined ? undefined : Number(given);
+      // WHY 数字だけを受ける: Number() は 1e0 や 0x2 も数にする。文書の「1〜6 の整数」と受け付ける書き方をそろえる
+      if (given !== undefined && !/^[0-9]+$/.test(given)) throw new CliError(`--cols は 1〜${FORMAT_MAX_COLS} の整数: ${given}`);
+      const res = await call(flags.has("--dry-run") ? "/api/ops/dry" : "/api/ops", { board: boardArg(pos[0]), ops: [{ op: "format", ...(cols === undefined ? {} : { cols }) }] });
       // 動いた要素は多いので、id だけを返す
       print(isRecord(res) && Array.isArray(res.updated) ? { moved: res.updated.map((e) => (isRecord(e) ? e.id : e)) } : res);
       return;

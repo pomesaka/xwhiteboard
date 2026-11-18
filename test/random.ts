@@ -1,5 +1,7 @@
 // 乱数で、ボードと操作を作る。テスト（fuzz.test.ts）だけが使う。種が同じなら、同じ並びになる。
-import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf, PAD, sectionTop, type Box, type Doc, type El } from "../src/shared/model.ts";
+import { applyOps, boxOf, emptyDoc, isRecord, isSolid, membersOf, PAD, sectionTop, type Box, type Doc, type El, type Point } from "../src/shared/model.ts";
+import { planFormat } from "../src/shared/format.ts";
+import { withSummaryHeights } from "../src/shared/summary.ts";
 import { add, drag, resize, rm, setOps, type Gesture, type Op } from "./screen.ts";
 
 export type Rng = () => number;
@@ -266,5 +268,145 @@ export function violations(base: Doc, ops: readonly Op[]): string[] {
   // 重なっていなかったセクションどうしが、重ならない
   const overlapped = overlaps(base);
   for (const pair of overlaps(doc)) if (!overlapped.has(pair) && pair.split("/").every((id) => before.has(id))) out.add("セクションが重なる");
+  return [...out];
+}
+
+// ---- 並べ直し（format）の乱数のボードと、決まり ----
+
+/**
+ * 互いに重ならずに置いたボード。格子のマス（1200×1700）に 1 つずつ、セクション（中身つき）、まとめの帯、外の付箋を置く。
+ * 外の付箋は、どのセクションの枠からも離れている
+ */
+export function tidyBoard(r: Rng): Doc {
+  let doc = emptyDoc("t");
+  const shows = ["decided", "open", "todo", "carried", "priority"];
+  // マスの幅は、いちばん広いセクション（900）より 200 以上広い。外の付箋は、どのセクションの枠からも 60 以上離れる
+  const cells = Array.from({ length: 12 }, (_, i) => ({ x: (i % 4) * 1200 + int(r, 0, 100, 10), y: Math.floor(i / 4) * 1700 + int(r, 0, 100, 10) }));
+  let n = 0;
+  for (const cell of cells) {
+    const k = r();
+    if (k < 0.15) continue;
+    if (k < 0.7) {
+      const id = `s${n++}`;
+      const w = int(r, 300, 900, 10);
+      const arranged = r() < 0.5;
+      const ops: Op[] = [{ op: "add", el: { id, type: "container", ...cell, w, ...(arranged ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10) }), ...(r() < 0.2 ? { locked: true } : {}) } }];
+      doc = must(doc, ops);
+      const box = boxOf(doc.elements.find((e) => e.id === id) ?? { id, type: "container" });
+      const m = int(r, 0, 7);
+      const inside: Op[] = [];
+      for (let i = 0; i < m; i++) {
+        const status = r() < 0.3 ? { status: pick(r, ["decided", "open", "todo"]) } : {};
+        if (arranged) inside.push({ op: "add", in: id, el: { id: `m${n++}`, type: "shape", text: "付箋", ...status } });
+        else if (box && box.h > 100) {
+          const p = { x: box.x + int(r, 0, box.w - 60, 10), y: box.y + int(r, 52, box.h - 40, 10) };
+          const q = r();
+          if (q < 0.6) inside.push({ op: "add", el: { id: `m${n++}`, type: "shape", ...p, w: 60, h: 40, ...status } });
+          else if (q < 0.75) inside.push({ op: "add", el: { id: `m${n++}`, type: "comment", ...p, w: 40, h: 30 } });
+          else if (q < 0.9) inside.push({ op: "add", el: { id: `m${n++}`, type: "stroke", points: [[p.x, p.y], [p.x + 20, p.y + 20]] } });
+          else inside.push({ op: "add", el: { id: `m${n++}`, type: "arrow", from: [p.x, p.y], to: [p.x + 30, p.y + 20] } });
+        }
+      }
+      if (inside.length > 0) doc = must(doc, inside);
+      continue;
+    }
+    if (k < 0.85) {
+      const show = shows.shift();
+      if (show) doc = must(doc, [{ op: "add", el: { id: `b${n++}`, type: "summary", show, ...cell, w: int(r, 240, 480, 10) } }]);
+      continue;
+    }
+    doc = must(doc, [{ op: "add", el: { id: `f${n++}`, ...solid(r), ...cell } }]);
+  }
+  // 要素どうしを結ぶ矢印
+  const solids = doc.elements.filter(isSolid);
+  for (let i = 0; i < 3 && solids.length > 1; i++) {
+    const res = applyOps(doc, [{ op: "add", el: { id: `r${n++}`, type: "arrow", from: pick(r, solids).id, to: pick(r, solids).id, ...(r() < 0.5 ? { route: "elbow", bends: [int(r, 0, 3000, 10)] } : {}) } }]);
+    if (res.ok) doc = res.value.doc;
+  }
+  return doc;
+}
+
+/** 座標を乱数で決めたボード。セクションの重なり、入れ子、枠にかかる要素がある。断られた要素は飛ばす */
+export function messyBoard(r: Rng): Doc {
+  let doc = emptyDoc("t");
+  const count = int(r, 0, 14);
+  for (let i = 0; i < count; i++) {
+    const p = { x: int(r, -400, 2400, 10), y: int(r, -400, 2400, 10) };
+    const q = r();
+    let el: Op;
+    if (q < 0.4) el = { id: `s${i}`, type: "container", ...p, w: int(r, 100, 900, 10), ...(r() < 0.3 ? { cols: int(r, 1, 4) } : { h: int(r, 52, 800, 10) }), ...(r() < 0.2 ? { locked: true } : {}) };
+    else if (q < 0.5) el = { id: `b${i}`, type: "summary", show: pick(r, ["decided", "open", "todo"]), ...p };
+    else if (q < 0.8) el = { id: `f${i}`, ...solid(r), ...p, ...(r() < 0.3 ? { status: "decided" } : {}) };
+    else if (q < 0.9) el = { id: `k${i}`, type: "comment", ...p, w: 60, h: 60 };
+    else el = { id: `l${i}`, type: "stroke", points: [[p.x, p.y], [p.x + 40, p.y + 30]] };
+    if (el.type === "shape" && el.status === undefined) delete el.status;
+    const res = applyOps(doc, [{ op: "add", el }]);
+    if (res.ok) doc = res.value.doc;
+  }
+  return doc;
+}
+
+/**
+ * base に format（cols）をかけた結果が、並べ直しの決まりを破っていたら、破った決まりの名前を返す。断られたら、何も返さない。
+ * tidy は、重ならずに置いたボード（tidyBoard）か。中身とセクションへの入り方、重なり、左上の決まりは、そのボードでだけ見る
+ */
+export function formatViolations(base: Doc, cols: number, tidy: boolean): string[] {
+  const op = { op: "format", cols };
+  const res = applyOps(base, [op]);
+  if (!res.ok) return [];
+  const doc = res.value.doc;
+  const out = new Set<string>(violations(base, [op]));
+  const before = new Map(base.elements.map((e) => [e.id, e]));
+  const after = new Map(doc.elements.map((e) => [e.id, e]));
+  // P1 もう一度かけても変わらない
+  const again = applyOps(doc, [op]);
+  if (!again.ok) out.add("2 回めが断られる");
+  else if (again.value.updated.length > 0) out.add("もう一度かけると変わる");
+  // P7 返す一覧が、実際に変わった要素と同じ。試すだけの計算（planFormat）とも同じ
+  const changed = doc.elements.filter((e) => JSON.stringify(e) !== JSON.stringify(before.get(e.id))).map((e) => e.id).sort();
+  if (res.value.updated.map((e) => e.id).sort().join(",") !== changed.join(",")) out.add("返す一覧が、動いた要素と違う");
+  const plan = planFormat(base.elements, cols);
+  if (!plan.ok || JSON.stringify(plan.value.moved) !== JSON.stringify(res.value.updated)) out.add("試した結果と、動いた要素が違う");
+  // P6 セクションに入っていない、場所をふさぐ要素は動かない
+  const sized = withSummaryHeights(base.elements);
+  const sections = sized.filter((e) => e.type === "container");
+  const inSome = new Set(sections.flatMap((c) => membersOf(sized, c).map((m) => m.id)));
+  for (const el of base.elements) if (isSolid(el) && !inSome.has(el.id) && JSON.stringify(el) !== JSON.stringify(after.get(el.id))) out.add("セクションに入っていない要素が動く");
+  if (!tidy) return [...out];
+  // P2 要素の集まり、並び、セクションごとの中身が同じ
+  if (base.elements.map((e) => e.id).join(",") !== doc.elements.map((e) => e.id).join(",")) out.add("要素か並びが変わる");
+  const sizedAfter = withSummaryHeights(doc.elements);
+  const content = (els: El[], id: string): string => {
+    const c = els.find((e) => e.id === id);
+    return c ? membersOf(els, c).map((m) => m.id).sort().join(",") : "";
+  };
+  for (const c of sections) if (content(sized, c.id) !== content(sizedAfter, c.id)) out.add("セクションの中身が変わる");
+  // P3 中身は、セクションと同じだけ動く
+  for (const c of sections) {
+    const c2 = sizedAfter.find((e) => e.id === c.id);
+    const [b1, b2] = [boxOf(c), c2 ? boxOf(c2) : null];
+    if (!b1 || !b2) continue;
+    if (b1.w !== b2.w || b1.h !== b2.h) out.add("セクションの大きさが変わる");
+    for (const m of membersOf(sized, c)) {
+      const m2 = after.get(m.id);
+      const [p1, p2] = [boxOf(m), m2 ? boxOf(m2) : null];
+      if (p1 && p2 && (p1.x - b1.x !== p2.x - b2.x || p1.y - b1.y !== p2.y - b2.y)) out.add("中身が、セクションと違う量だけ動く");
+    }
+  }
+  // P4 並べた要素（セクションと帯）どうしと、外の要素との間が 60 以上空く
+  const placedBoxes = sizedAfter.flatMap((e) => (e.type === "container" || e.type === "summary" ? (boxOf(e) ?? []) : []));
+  const obstacleBoxes = sizedAfter.flatMap((e) => (isSolid(e) && !inSome.has(e.id) ? (boxOf(e) ?? []) : []));
+  const apart = (a: Box, b: Box): boolean => a.x + a.w + 60 <= b.x + 0.5 || b.x + b.w + 60 <= a.x + 0.5 || a.y + a.h + 60 <= b.y + 0.5 || b.y + b.h + 60 <= a.y + 0.5;
+  if (placedBoxes.some((a, i) => placedBoxes.some((b, j) => i < j && !apart(a, b)))) out.add("並べた要素どうしが近すぎる");
+  if (placedBoxes.some((a) => obstacleBoxes.some((b) => !apart(a, b)))) out.add("並べた要素が、外の要素に近すぎる");
+  // P5 並べる要素の全体の左上が変わらない。
+  // 起点の場所が外の要素でふさがっているときだけ、x を保ったまま、その要素の下の端から 60 空けた高さへ下がる（よける決まりが先）
+  const corner = (els: El[]): Point | null => {
+    const bs = els.flatMap((e) => (e.type === "container" || e.type === "summary" ? (boxOf(e) ?? []) : []));
+    return bs.length === 0 ? null : [Math.min(...bs.map((b) => b.x)), Math.min(...bs.map((b) => b.y))];
+  };
+  const [c1, c2] = [corner(sized), corner(sizedAfter)];
+  const dodged = c1 && c2 && c1[0] === c2[0] && c2[1] > c1[1] && obstacleBoxes.some((b) => b.y + b.h + 60 === c2[1]);
+  if (JSON.stringify(c1) !== JSON.stringify(c2) && !dodged) out.add("全体の左上が変わる");
   return [...out];
 }

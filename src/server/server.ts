@@ -299,6 +299,13 @@ export async function startServer(port: number): Promise<void> {
         const applied = commitOps(board, b.ops, typeof b.client === "string" ? b.client : "");
         return json({ added: applied.added, updated: applied.updated, removed: applied.removed, ...(applied.order ? { order: applied.order } : {}) });
       }
+      case "POST /api/ops/dry": {
+        // 操作を適用した結果だけを返す。ボードは書き換えず、画面にも流さない（xwb format --dry-run）。
+        // WHY /api/ops と同じ applyOps を通す: 別の計算にすると、試した結果と、実際に動く要素が食い違う
+        const b = await body(req);
+        const applied = unwrap(applyOps(getBoard(boardPath(b.board)).doc, b.ops));
+        return json({ added: applied.added, updated: applied.updated, removed: applied.removed, ...(applied.order ? { order: applied.order } : {}) });
+      }
       case "POST /api/comment/send": {
         // 人がコメントに書いて「送る」を押した。本文は先にコメントへ足して残し、その後で Claude に届ける。
         // 届け先が無くても本文は消えず、unsent の印が付く。本文なしで呼ぶと、残っているものを送り直す
