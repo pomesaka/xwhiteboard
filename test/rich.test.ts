@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isBoardRef, parseInline, resolveBoardRef, parseRich, plainText, toggleMarkup, type MarkupKind } from "../src/shared/rich.ts";
+import { bareUrls, isBoardRef, parseInline, resolveBoardRef, parseRich, plainText, toggleMarkup, type MarkupKind } from "../src/shared/rich.ts";
 
 describe("行の中の装飾を読む", () => {
   test.each([
@@ -116,5 +116,123 @@ describe("大きさの見積もりには、記号を除いた文字を使う", (
     ["何も無ければ、そのまま", "ふつうの文\n2 行め", "ふつうの文\n2 行め"],
   ])("%s", (_name, text, expected) => {
     expect(plainText(text)).toBe(expected);
+  });
+});
+
+describe("リンクの形で書かれていない URL を見つける", () => {
+  test.each<[string, string, string[]]>([
+    // 拾う。http:// か https:// で始まる
+    ["https の URL", "https://example.com/a/b?c=1#d", ["https://example.com/a/b?c=1#d"]],
+    ["http の URL", "http://example.com", ["http://example.com"]],
+    ["空白で区切った、日本語の文の中", "詳細は https://example.com/a を見る", ["https://example.com/a"]],
+    ["空白なしの、日本語の文の中。全角の文字の前で切る", "詳細はhttps://example.com/aです", ["https://example.com/a"]],
+    ["全角の句点の前で切る", "資料は https://example.com/a。次へ", ["https://example.com/a"]],
+    ["全角の読点の前で切る", "https://example.com/a、https://example.com/b", ["https://example.com/a", "https://example.com/b"]],
+    ["文の終わりのピリオドは含めない", "See https://example.com/a.", ["https://example.com/a"]],
+    ["文の終わりのカンマは含めない", "https://example.com/a, and more", ["https://example.com/a"]],
+    ["途中のピリオドとカンマは含める", "https://example.com/a.b,c/d.html", ["https://example.com/a.b,c/d.html"]],
+    ["半角の括弧で囲んだ URL は、閉じ括弧を含めない", "(https://example.com/a)", ["https://example.com/a"]],
+    ["閉じ括弧と句読点が続いても除く", "(https://example.com/a).", ["https://example.com/a"]],
+    ["全角の括弧で囲んだ URL", "（https://example.com/a）", ["https://example.com/a"]],
+    ["URL の中の、対になった括弧は含める", "https://example.com/wiki/Foo_(bar)", ["https://example.com/wiki/Foo_(bar)"]],
+    ["% で書いた文字は含める", "https://example.com/%E8%B3%87%E6%96%99", ["https://example.com/%E8%B3%87%E6%96%99"]],
+    ["日本語をそのまま書いた URL は、日本語の前で切れる", "https://example.com/資料/a", ["https://example.com/"]],
+    ["ポートの付いた URL", "http://localhost:3000/a", ["http://localhost:3000/a"]],
+    ["太字の中の URL", "**https://example.com/a**", ["https://example.com/a"]],
+    ["蛍光ペンの中の URL", "==https://example.com/a==", ["https://example.com/a"]],
+    ["箇条書きの行の URL", "- https://example.com/a\n- 次", ["https://example.com/a"]],
+    ["2 行に 1 つずつ", "https://example.com/a\nhttps://example.org/b", ["https://example.com/a", "https://example.org/b"]],
+    ["リンクの形が崩れている（行き先に空白がある）", "[表示](https://example.com/a b)", ["https://example.com/a"]],
+    ["リンクの形の外にも URL がある", "[表示](https://example.com/a) と https://example.com/b", ["https://example.com/b"]],
+    // 拾う。スキームの無いドメイン
+    ["ドメインとパス", "example.com/docs", ["example.com/docs"]],
+    ["ドメインだけ", "example.com を見る", ["example.com"]],
+    ["サブドメイン", "docs.example.com/a?b=1", ["docs.example.com/a?b=1"]],
+    ["www で始まる", "www.example.com", ["www.example.com"]],
+    ["co.jp", "example.co.jp/a", ["example.co.jp/a"]],
+    ["日本語の文の中に、空白なしで書いた", "詳細はexample.com/docsです", ["example.com/docs"]],
+    ["文の終わりのピリオドは含めない", "See example.com/docs.", ["example.com/docs"]],
+    ["ドメインの直後のピリオド", "See example.com.", ["example.com"]],
+    ["ホスト名に大文字のまじったドメイン", "GitHub.com/a", ["GitHub.com/a"]],
+    ["スキームの無い行き先を書いた、リンクにならない形", "[表示](example.com/docs)", ["example.com/docs"]],
+    ["拾う TLD の全部","a.com b.net c.org d.io e.dev f.ai g.jp", ["a.com", "b.net", "c.org", "d.io", "e.dev", "f.ai", "g.jp"]],
+    // 拾わない
+    ["リンクの形の中の URL", "[表示](https://example.com/a)", []],
+    ["リンクの文字に書いたドメイン", "[example.com](https://example.com)", []],
+    ["コードの中の URL", "`https://example.com/a`", []],
+    ["コードの中のドメイン", "`example.com/docs`", []],
+    ["ほかのボードへのリンク", "[x](anken.board.json)", []],
+    ["ボードのファイル名", "a.board.json を開く", []],
+    ["ファイル名", "README.md と main.ts と index.html と data.json", []],
+    ["版の番号", "v1.2.3 と 1.2", []],
+    ["メールアドレス", "taro@example.com へ送る", []],
+    ["サブドメインのあるメールアドレス", "taro@mail.example.co.jp", []],
+    ["日本語の文の中のピリオド", "売上は 1.5 倍.次は 2.0 倍", []],
+    ["拾う TLD の後ろに、まだ名前が続く", "example.com.bak と foo.computer", []],
+    ["スキームだけ", "https:// と書く", []],
+    ["http と https のほかのスキーム", "ftp://files.test/a と mailto:x", []],
+    ["文字が無い", "", []],
+  ])("%s", (_name, text, expected) => {
+    expect(bareUrls(text).map((u) => u.url)).toEqual(expected);
+  });
+
+  test.each<[string, string, string[]]>([
+    ["名前として書いた語（末尾が大文字）は拾わない", "ASP.NET と Socket.IO と Example.COM", []],
+    ["ホスト名が大文字で、末尾が小文字のドメインは拾う", "Claude.ai と Fly.io", ["Claude.ai", "Fly.io"]],
+    ["大文字のスキーム", "HTTPS://EXAMPLE.COM/A と Http://example.com/b", ["HTTPS://EXAMPLE.COM/A", "Http://example.com/b"]],
+    ["スキームの無いドメインのポートとパス", "example.com:8080/a を見る", ["example.com:8080/a"]],
+    ["スキームの無いドメインのポートだけ", "example.com:8080。", ["example.com:8080"]],
+    ["ドメインの後ろのコロンは、数字が続かなければ含めない", "example.com: 説明", ["example.com"]],
+    ["装飾の中に書いたリンクの形", "**[表示](https://example.com/a)**", ["https://example.com/a"]],
+  ])("拾う形（確認で見つかった例）: %s", (_name, text, expected) => {
+    expect(bareUrls(text).map((u) => u.url)).toEqual(expected);
+  });
+
+  test.each<[string, string, boolean[]]>([
+    ["地の文", "https://example.com/a と example.org", [false, false]],
+    ["太字", "**https://example.com/a**", [true]],
+    ["斜体", "*example.com/a*", [true]],
+    ["取り消し線", "~~https://example.com/a~~", [true]],
+    ["蛍光ペン", "=={pink}https://example.com/a==", [true]],
+    ["装飾の中に書いたリンクの形", "==[表示](https://example.com/a)==", [true]],
+    ["箇条書きの行は、装飾に数えない", "- https://example.com/a", [false]],
+    ["装飾の中と外", "**example.com** と example.org", [true, false]],
+  ])("装飾の中にあるか: %s", (_name, text, expected) => {
+    expect(bareUrls(text).map((u) => u.decorated)).toEqual(expected);
+  });
+
+  // 案内の行き先（href）をリンクの形に書けば、リンクとして読まれ、行き先が元の URL と同じ所を指す。
+  // WHY: 案内の形と、リンクを読む式（parseInline）が食い違うと、案内どおりに直してもリンクにならないか、行き先が途中で切れる
+  test.each<[string, string, string]>([
+    ["https の URL", "資料はhttps://example.com/a/b?c=1#dです。", "https://example.com/a/b?c=1#d"],
+    ["スキームの無いドメインには https:// を付ける", "example.com/docs を見る", "https://example.com/docs"],
+    ["括弧を含む URL", "https://example.com/wiki/Foo_(bar)", "https://example.com/wiki/Foo_(bar)"],
+    ["括弧が 2 組ある URL", "https://example.com/a_(b)_(c)/d", "https://example.com/a_(b)_(c)/d"],
+    ["大文字のスキームは小文字にする", "HTTPS://EXAMPLE.COM/A", "https://EXAMPLE.COM/A"],
+    ["大文字と小文字のまじったスキーム", "Http://example.com/b", "http://example.com/b"],
+    ["ポートの付いた、スキームの無いドメイン", "example.com:8080/a", "https://example.com:8080/a"],
+    ["ポートの付いた URL", "http://localhost:3000/a", "http://localhost:3000/a"],
+    ["% で書いた文字は、そのまま", "https://example.com/%E8%B3%87?q=%28", "https://example.com/%E8%B3%87?q=%28"],
+    ["括弧で囲んだ URL", "（参考: (https://example.com/a)。）", "https://example.com/a"],
+  ])("案内どおりに直すと、リンクになる: %s", (_name, text, target) => {
+    const [found, ...rest] = bareUrls(text);
+    expect(rest).toEqual([]);
+    if (found === undefined) throw new Error("URL が見つからない");
+    const fixed = text.replace(found.url, `[表示](${found.href})`);
+    expect(bareUrls(fixed)).toEqual([]);
+    const links = parseInline(fixed).flatMap((i) => (i.kind === "link" ? [i.href] : []));
+    // 括弧は % で書いてある。% で書いたほかの文字はそのままなので、括弧だけを戻して比べる
+    expect(links.map((h) => h.replaceAll("%28", "(").replaceAll("%29", ")"))).toEqual([target.replaceAll("%28", "(")]);
+    expect(links.every((h) => !/[()]/.test(h))).toBe(true);
+  });
+
+  test.each<[string, string, string]>([
+    ["太字の中の URL", "**https://example.com/a**", "[表示](https://example.com/a)"],
+    ["蛍光ペンの中のドメイン", "==example.com/docs==", "[表示](https://example.com/docs)"],
+    ["太字の中に書いたリンクの形", "**[表示](https://example.com/a)**", "[表示](https://example.com/a)"],
+  ])("装飾を外して、案内のリンクの形だけにすると、リンクになる: %s", (_name, text, fixed) => {
+    expect(bareUrls(text).map((u) => `[表示](${u.href})`)).toEqual([fixed]);
+    expect(bareUrls(fixed)).toEqual([]);
+    expect(parseInline(fixed).map((i) => i.kind)).toEqual(["link"]);
   });
 });

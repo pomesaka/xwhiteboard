@@ -4,7 +4,7 @@ import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TI
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
-import { isBoardRef, parseRich, plainText, type MarkColor } from "./rich.ts";
+import { bareUrls, isBoardRef, parseRich, plainText, type MarkColor } from "./rich.ts";
 import { LABEL_FONT, LABEL_LIFT, arrowPath, labelSpot } from "./route.ts";
 
 export type IssueKind =
@@ -34,6 +34,8 @@ export type IssueKind =
   | "repeated-value"
   /** ほかのボードへのリンクの行き先に、ファイルが無い */
   | "dead-link"
+  /** URL が、リンクの形（[文字](https://…)）で書かれていなくて、押せない */
+  | "bare-url"
   /** 列で並べるセクション（cols）の 1 列が狭くて、付箋の文字が入りにくい */
   | "narrow-column"
   /** 付箋の欄（title・status・carriedFrom）に書けることを、本文や札（tag）に手で書いている */
@@ -108,10 +110,14 @@ const HANDWRITTEN_CARRIED = /(?:[·・→（(]\s*\d+\/\d+\s*から|^\s*\d+\/\d+\
 
 const round = (n: number): number => Math.round(n);
 
+/** 要素の、文字の装飾が効く文字（付箋・図形・文字の本文と、表のセル） */
+function richTexts(el: El): string[] {
+  return [el.text ?? "", ...(el.head ?? []), ...(el.rows ?? []).flat()];
+}
+
 /** 要素に書かれた、ほかのボードへのリンクの行き先 */
 function boardRefs(el: El): string[] {
-  const texts = [el.text ?? "", ...(el.head ?? []), ...(el.rows ?? []).flat()];
-  const inText = texts.flatMap((t) => parseRich(t).flatMap((b) => b.lines.flatMap((line) => line.flatMap((i) => (i.kind === "link" && isBoardRef(i.href) ? [i.href] : [])))));
+  const inText = richTexts(el).flatMap((t) => parseRich(t).flatMap((b) => b.lines.flatMap((line) => line.flatMap((i) => (i.kind === "link" && isBoardRef(i.href) ? [i.href] : [])))));
   return [...new Set([...inText, ...(el.href !== undefined && isBoardRef(el.href) ? [el.href] : [])])];
 }
 
@@ -299,6 +305,18 @@ function checkRepeats(doc: Doc): Issue[] {
 
 export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
   const issues: Issue[] = [];
+  // リンクの形で書いていない URL。画面ではただの文字で出て、押せない
+  for (const el of doc.elements) {
+    const found = richTexts(el).flatMap(bareUrls);
+    // 装飾の中の URL は、直し方が違うので、知らせを分ける
+    for (const decorated of [false, true]) {
+      const urls = new Map(found.filter((u) => u.decorated === decorated).map((u) => [u.url, u.href]));
+      if (urls.size === 0) continue;
+      const why = decorated ? "装飾（太字・斜体・取り消し線・蛍光ペン）の中にあり、リンクにならない。装飾は重ねられないので、装飾を外して、リンクの形だけで書く" : "ただの文字で出て押せない。リンクの形で書く";
+      const linked = [...urls.values()].map((href) => `[表示](${href})`);
+      issues.push({ kind: "bare-url", ids: [el.id], message: `${el.id} の URL（${[...urls.keys()].join("、")}）は、${why}: ${linked.join("、")}（「表示」は、行き先が分かる短い名前に替える）` });
+    }
+  }
   // リンクの行き先。人が押すまで気づけないので、ここで知らせる
   if (ctx.boardExists) {
     for (const el of doc.elements) {

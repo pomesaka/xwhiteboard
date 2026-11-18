@@ -160,6 +160,63 @@ export function toggleMarkup(text: string, start: number, end: number, kind: Mar
   return put(head, m.open, sel, tail);
 }
 
+// URL に書ける文字。半角の英数字と記号だけ。
+// WHY 全角の文字で切る: 日本語の文は、URL の後ろに空白を置かずに続く（「詳細はhttps://example.com/aです」）。
+// 日本語をそのまま含む URL は、途中で切れて見つかる
+const URL_CHARS = "[A-Za-z0-9\\-._~:/?#@!$&'()*+,;=%]";
+// スキームの無いドメインとして拾う、末尾（TLD）。
+// WHY 狭く決める: 「名前.拡張子」の形は、ファイル名（a.board.json、README.md、main.ts）や版（v1.2.3）にも出る。
+// 拡張子と重ならない、よく使う TLD だけを拾う。前が英数字・@・.・/・: の所からは始めない（メールアドレスと、URL の途中を拾わない）
+// WHY 末尾は小文字だけ: 名前として書いた語（ASP.NET、Socket.IO）を拾わない。ホスト名の大文字（GitHub.com）は拾う
+const BARE_DOMAIN = `(?<![\\w@./:-])(?:[A-Za-z0-9-]+\\.)+(?:com|net|org|io|dev|ai|jp)(?![\\w-]|\\.[A-Za-z0-9])(?::\\d+)?(?:[/?#]${URL_CHARS}*)?`;
+const SCHEME = /^https?:\/\//i;
+const BARE_URL = new RegExp(`[Hh][Tt][Tt][Pp][Ss]?://[A-Za-z0-9]${URL_CHARS}*|${BARE_DOMAIN}`, "g");
+
+/** URL の終わりから、文の句読点と、対になる開き括弧の無い閉じ括弧を除く（「（https://example.com/a）。」の「）。」） */
+function trimUrl(url: string): string {
+  let s = url;
+  for (;;) {
+    const unpaired = s.endsWith(")") && s.split("(").length < s.split(")").length;
+    if (!unpaired && !/[.,;:!?'*]$/.test(s)) return s;
+    s = s.slice(0, -1);
+  }
+}
+
+export interface BareUrl {
+  /** 書かれていた URL */
+  url: string;
+  /** リンクの形（[文字](href)）に書ける行き先。parseInline が、この全体を行き先として読む */
+  href: string;
+  /** 装飾（太字、斜体、取り消し線、蛍光ペン）の中にあるか。装飾は重ねられないので、中をリンクの形に直してもリンクにならない */
+  decorated: boolean;
+}
+
+/**
+ * URL を、リンクの形に書ける行き先にする。スキームが無ければ https:// を付け、スキームは小文字にし、括弧は % で書く。
+ * WHY: リンクを読む式（WEB_REF）は、小文字の http(s):// で始まり、) の前までを行き先にする。そのまま書くと、リンクにならないか、行き先が途中で切れる
+ */
+function linkHref(url: string): string {
+  const scheme = SCHEME.exec(url)?.[0];
+  const rest = scheme === undefined ? url : url.slice(scheme.length);
+  return (scheme?.toLowerCase() ?? "https://") + rest.replaceAll("(", "%28").replaceAll(")", "%29");
+}
+
+/**
+ * リンクの形（[文字](https://…)）で書かれていない URL。http:// か https:// で始まるものと、スキームの無いドメイン（example.com/docs）。
+ * どちらも画面ではただの文字で出て、押せない。コード（`…`）の中は拾わない。
+ * 装飾の中に書いたリンクの形（**[文字](https://…)**）も、リンクにならないので拾う。
+ */
+export function bareUrls(text: string): BareUrl[] {
+  const inlines = parseRich(text).flatMap((b) => b.lines.flat());
+  return inlines.flatMap((i) => {
+    if (i.kind === "code" || i.kind === "link") return [];
+    return [...i.text.matchAll(BARE_URL)].map((m) => {
+      const url = trimUrl(m[0]);
+      return { url, href: linkHref(url), decorated: i.kind !== "text" };
+    });
+  });
+}
+
 /** 装飾の記号を除いた、画面に出る文字。大きさの見積もりに使う。箇条書きの行頭は、印のぶんの 2 文字を残す */
 export function plainText(text: string): string {
   return parseRich(text)

@@ -163,6 +163,46 @@ describe("ほかのボードへのリンクの行き先", () => {
   });
 });
 
+describe("リンクの形で書いていない URL", () => {
+  // どの文字を URL と読むかは、test/rich.test.ts の表で確かめる。ここは、どの要素のどの文字を見るかと、案内の文
+  const run = (el: Record<string, unknown>): string[] => {
+    const r = applyOps(emptyDoc("t"), [add(el)]);
+    if (!r.ok) throw new Error(r.error);
+    return checkBoard(r.value.doc)
+      .filter((i) => i.kind === "bare-url")
+      .map((i) => `${i.ids.join(",")}: ${i.message}`);
+  };
+  const hint = "（「表示」は、行き先が分かる短い名前に替える）";
+  const decorated = "装飾（太字・斜体・取り消し線・蛍光ペン）の中にあり、リンクにならない。装飾は重ねられないので、装飾を外して、リンクの形だけで書く";
+  test.each([
+    ["付箋の本文の https の URL", { id: "a", type: "shape", text: "資料は https://example.com/a。" }, ["a: a の URL（https://example.com/a）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)" + hint]],
+    ["スキームの無いドメインは、https:// を付けて案内する", { id: "a", type: "shape", text: "example.com/docs を見る" }, ["a: a の URL（example.com/docs）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/docs)" + hint]],
+    [
+      "1 つの要素にいくつあっても、知らせは 1 件。同じ URL は 1 回だけ出す",
+      { id: "a", type: "shape", text: "https://example.com/a と example.org\nhttps://example.com/a" },
+      ["a: a の URL（https://example.com/a、example.org）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)、[表示](https://example.org)" + hint],
+    ],
+    ["文字（text）の要素", { id: "x", type: "text", text: "http://example.com", x: 0, y: 0 }, ["x: x の URL（http://example.com）は、ただの文字で出て押せない。リンクの形で書く: [表示](http://example.com)" + hint]],
+    ["表のセル", { id: "t", type: "table", rows: [["a", "https://example.com/a"]] }, ["t: t の URL（https://example.com/a）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)" + hint]],
+    ["表の見出し", { id: "t", type: "table", head: ["example.com"], rows: [["a"]] }, ["t: t の URL（example.com）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com)" + hint]],
+    ["括弧は % で、スキームは小文字で案内する", { id: "a", type: "shape", text: "HTTPS://example.com/wiki/Foo_(bar)" }, ["a: a の URL（HTTPS://example.com/wiki/Foo_(bar)）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/wiki/Foo_%28bar%29)" + hint]],
+    ["装飾の中の URL には、装飾を外すよう案内する", { id: "a", type: "shape", text: "**https://example.com/a**" }, ["a: a の URL（https://example.com/a）は、" + decorated + ": [表示](https://example.com/a)" + hint]],
+    ["装飾の中に書いたリンクの形にも、同じ案内を出す", { id: "a", type: "shape", text: "==[仕様](https://example.com/a)==" }, ["a: a の URL（https://example.com/a）は、" + decorated + ": [表示](https://example.com/a)" + hint]],
+    [
+      "装飾の中と外の両方にあれば、知らせを分ける",
+      { id: "a", type: "shape", text: "example.org と **example.com**" },
+      ["a: a の URL（example.org）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.org)" + hint, "a: a の URL（example.com）は、" + decorated + ": [表示](https://example.com)" + hint],
+    ],
+    ["リンクの形で書いた URL は知らせない", { id: "a", type: "shape", text: "[仕様](https://example.com/a)" }, []],
+    ["コードの中の URL は知らせない", { id: "a", type: "shape", text: "`https://example.com/a`" }, []],
+    ["ほかのボードへのリンクとファイル名は知らせない", { id: "a", type: "shape", text: "[x](anken.board.json) と README.md" }, []],
+    ["付箋の見出し（title）と札（tag）は見ない（装飾が効かない）", { id: "a", type: "shape", title: "example.com", tag: "example.org", text: "本文" }, []],
+    ["セクションの題名は見ない", { id: "s", type: "container", title: "https://example.com/a", x: 0, y: 0, w: 400, h: 200 }, []],
+  ])("%s", (_name, el, expected) => {
+    expect(run(el)).toEqual(expected);
+  });
+});
+
 describe("付箋の欄", () => {
   const note = (extra: Record<string, unknown>) => [add({ id: "a", type: "shape", x: 0, y: 0, w: 220, h: 110, ...extra })];
   test.each([
