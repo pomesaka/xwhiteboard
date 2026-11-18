@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyOps, sectionTop, statusBadge, commentPayload, emptyDoc, parseDoc, parseEl, pendingChanges, serialize, trackHuman, type Doc } from "../src/shared/model.ts";
+import { applyOps, colWidth, membersOf, sectionTop, statusBadge, commentPayload, emptyDoc, parseDoc, parseEl, pendingChanges, serialize, trackHuman, type Doc } from "../src/shared/model.ts";
 
 function build(ops: unknown[], base: Doc = emptyDoc("t")): Doc {
   const r = applyOps(base, ops);
@@ -8,6 +8,16 @@ function build(ops: unknown[], base: Doc = emptyDoc("t")): Doc {
 }
 
 const find = (doc: Doc, id: string) => doc.elements.find((e) => e.id === id);
+
+/** 操作のまとまりを、順に 1 つずつ渡す */
+const run = (batches: unknown[][], base: Doc = emptyDoc("t")): Doc => batches.reduce((doc: Doc, ops) => build(ops, doc), base);
+
+/** 並べ終わったボードに、中身と関係のない操作をしたときに動く要素の id（並びが変われば "order" も）。並べ直しが落ち着いていれば、空 */
+function settled(doc: Doc): string[] {
+  const r = applyOps(doc, [{ op: "title", title: "x" }]);
+  if (!r.ok) throw new Error(r.error);
+  return [...r.value.updated.map((e) => e.id), ...(r.value.order ? ["order"] : [])];
+}
 
 describe("parseEl は、形に合わない要素を理由を付けて断る", () => {
   test.each([
@@ -83,6 +93,8 @@ describe("下にあるものは、上のセクションが伸びるか、上に�
     ["伸びたセクションと同じ段のものは動かない", fill, "v", { x: 700, y: 100 }],
     ["set でセクションの高さを増やしても、下のセクションは間を保って下がる", [{ op: "set", id: "s", patch: { h: 300 } }], "t", { x: 100, y: 460 }],
     ["set でセクションを動かしただけなら、何も動かない", [{ op: "set", id: "s", patch: { y: 90 } }], "t", { x: 100, y: 320 }],
+    ["cols の無いセクションが伸びても、下の端にかかっていた要素は動かない", [{ op: "add", el: { id: "st", type: "shape", x: 124, y: 220, w: 100, h: 110 } }, ...fill], "st", { x: 124, y: 220 }],
+    ["cols の無いセクションを set で動かしても、中身は付いていかない", [{ op: "set", id: "t", patch: { x: 150 } }], "m", { x: 124, y: 372 }],
     ["セクションが伸びなければ、何も動かない", [{ op: "add", in: "s", el: { id: "a", type: "shape", h: 40 } }], "t", { x: 100, y: 320 }],
     ["above で足した要素は、指した要素があった場所に入る", insert, "sum", { x: 100, y: 100 }],
     ["above で指した要素は、足した要素の高さと間のぶん下がる", insert, "s", { x: 100, y: 320 }],
@@ -113,6 +125,8 @@ describe("セクションの中の要素が下へ伸びると、同じセクシ�
     ["伸びたセクションの下のセクションは、間を保って下がる", taller, "t", { y: 422 }],
     ["下の段の付箋を伸ばしても、上の段は動かない", [{ op: "set", id: "c", patch: { h: 160 } }], "a", { x: 24, y: 52 }],
     ["文字が増えて高くなった表でも、下の中身が下がる", [{ op: "add", in: "s", el: { id: "tb", type: "table", w: 456, rows: [["1"]] } }, { op: "add", in: "s", el: { id: "e", type: "shape" } }, { op: "set", id: "tb", patch: { rows: [["1"], ["2"], ["3"]] } }], "e", { x: 24, y: 423 }],
+    ["大きく伸ばしても、下の付箋は 1 回だけ下がり、枠の中に残る", [{ op: "set", id: "a", patch: { h: 300 } }], "c", { x: 24, y: 368 }],
+    ["大きく伸ばしたときも、セクションは中身が入る高さになる", [{ op: "set", id: "a", patch: { h: 300 } }], "s", { y: 0, h: 502 }],
     ["位置も一緒に変えたときは、押し下げない", [{ op: "set", id: "a", patch: { h: 160, y: 60 } }], "c", { x: 24, y: 178 }],
     ["低くしたときは、何も動かない", [{ op: "set", id: "a", patch: { h: 60 } }], "c", { x: 24, y: 178 }],
   ])("%s", (_name, ops, id, expected) => {
@@ -352,34 +366,85 @@ test("ファイルは 1 要素 1 行で書かれ、読み直すと同じボー�
   expect(parseDoc(text)).toEqual({ ok: true, value: doc });
 });
 
+// ---- 列で並べるセクション（cols）----
+
+type Want = Record<string, Record<string, unknown>>;
+const sec = (id: string, x: number, y: number, extra: Record<string, unknown> = {}) => ({ op: "add", el: { id, type: "container", x, y, w: 504, cols: 2, ...extra } });
+const cont = (id: string, x: number, y: number, w: number, h: number) => ({ op: "add", el: { id, type: "container", x, y, w, h } });
+const into = (section: string, el: Record<string, unknown>) => ({ op: "add", in: section, el: { type: "shape", ...el } });
+const shape = (id: string, x: number, y: number, extra: Record<string, unknown> = {}) => ({ op: "add", el: { id, type: "shape", x, y, w: 220, h: 110, ...extra } });
+const set = (id: string, patch: Record<string, unknown>) => ({ op: "set", id, patch });
+const rm = (id: string) => ({ op: "rm", id });
+
+/** 結果の要素が期待どおりで、並べ直しが落ち着いている（関係のない操作をしても、何も動かない）ことを確かめる */
+function expectBoard(doc: Doc, want: Want): void {
+  for (const [id, w] of Object.entries(want)) expect(find(doc, id)).toMatchObject(w);
+  expect(settled(doc)).toEqual([]);
+}
+
+test("コメントを動かしても、そのコメントを指すコメントは動かない", () => {
+  const doc = run([[{ op: "add", el: { id: "k1", type: "comment", x: 30, y: 60 } }, { op: "add", el: { id: "k2", type: "comment", x: 40, y: 70, on: "k1" } }], [set("k1", { x: 100 })]]);
+  expect(find(doc, "k2")).toMatchObject({ x: 40, y: 70 });
+});
+
+test("セクションの中身は、中心が枠の中にある要素。中のセクションと矢印は入らない", () => {
+  const doc = build([cont("s", 0, 0, 504, 312), cont("inner", 100, 100, 100, 100), { op: "add", el: { id: "ar", type: "arrow", from: [30, 60], to: [300, 200] } }, shape("a", 24, 52), shape("out", 600, 52), { op: "add", el: { id: "l", type: "stroke", points: [[30, 60], [60, 90]] } }]);
+  const s = find(doc, "s");
+  expect(s && membersOf(doc.elements, s).map((e) => e.id)).toEqual(["a", "l"]);
+});
+
 describe("cols を書いたセクションは、中身を列に詰めて並べ、高さを中身に合わせる", () => {
-  const section = { op: "add", el: { id: "s", type: "container", x: 100, y: 100, w: 504, h: 160, cols: 2 } };
-  const note = (id: string, extra: Record<string, unknown> = {}) => ({ op: "add", in: "s", el: { id, type: "shape", ...extra } });
+  // s は (100,100)、幅 504、2 列。マスは x が 124・360、y が 152・278・404
+  const section = sec("s", 100, 100, { h: 160 });
+  const note = (id: string, extra: Record<string, unknown> = {}) => into("s", { id, ...extra });
   const abc = [section, note("a"), note("b"), note("c")];
   const at = (x: number, y: number, extra: Record<string, unknown> = {}) => ({ x, y, w: 220, ...extra });
+  const image = note("i", { type: "image", src: "x.png", w: 400, h: 300 });
 
-  test.each([
-    ["中身が無ければ、題名の帯だけに畳む", [section], { s: { h: 52 } }],
-    ["in で足すと、左上から列に入り、行が増えるとセクションが伸びる", abc, { a: at(124, 152), b: at(360, 152), c: at(124, 278), s: { h: 312 } }],
-    ["消すと詰め直して、セクションが縮む", [...abc, { op: "rm", id: "a" }], { b: at(124, 152), c: at(360, 152), s: { h: 186 } }],
-    ["行の高さは、その行でいちばん背の高いものに合わせる", [section, note("a", { h: 200 }), note("b"), note("c")], { c: at(124, 368), s: { h: 402 } }],
-    ["座標で置いたものも、中心がセクションの中なら並べる", [section, note("a"), { op: "add", el: { id: "z", type: "shape", x: 400, y: 160, w: 90, h: 60 } }], { a: at(124, 152), z: at(360, 152, { h: 60 }) }],
-    ["動かして前に置くと、その順に並べ直す", [...abc, { op: "set", id: "c", patch: { x: 110, y: 140 } }], { c: at(124, 152), a: at(360, 152), b: at(124, 278) }],
-    ["セクションの外へ出すと、残りを詰める", [...abc, { op: "set", id: "a", patch: { x: 900, y: 900 } }], { a: { x: 900, y: 900 }, b: at(124, 152), c: at(360, 152) }],
-    ["セクションの幅を変えると、列の幅が変わる", [...abc, { op: "set", id: "s", patch: { w: 704 } }], { a: { x: 124, w: 320 }, b: { x: 460, w: 320 } }],
-    ["列の数を変えると、並べ直す", [...abc, { op: "set", id: "s", patch: { cols: 1 } }], { a: { x: 124, y: 152, w: 456 }, b: { x: 124, y: 278 }, c: { x: 124, y: 404 }, s: { h: 438 } }],
-    ["後から cols を書いても並べる", [{ op: "add", el: { id: "s", type: "container", x: 100, y: 100, w: 504, h: 400 } }, { op: "add", el: { id: "p", type: "shape", x: 300, y: 300, w: 100, h: 50 } }, { op: "set", id: "s", patch: { cols: 2 } }], { p: at(124, 152, { h: 50 }), s: { h: 126 } }],
-    ["伸びたぶん、下のものを押し下げる", [section, { op: "add", el: { id: "u", type: "shape", x: 100, y: 300, w: 100, h: 50 } }, note("a"), note("b"), note("c")], { s: { h: 312 }, u: { y: 472 } }],
-    ["要素を指すコメントは、並べ直しに付いていく", [...abc, { op: "add", el: { id: "k", type: "comment", x: 130, y: 290, on: "c" } }, { op: "rm", id: "a" }], { c: at(360, 152), k: { x: 366, y: 164 } }],
-  ])("%s", (_name, ops, expected) => {
-    const doc = build(ops);
-    for (const [id, want] of Object.entries(expected)) expect(find(doc, id)).toMatchObject(want);
-  });
+  // 操作のまとまりを、順に 1 つずつ渡す
+  const rows: [string, unknown[][], Want][] = [
+    ["中身が無ければ、題名の帯だけに畳む", [[section]], { s: { h: 52 } }],
+    ["in で足すと、左上から列に入り、行が増えるとセクションが伸びる", [abc], { a: at(124, 152), b: at(360, 152), c: at(124, 278), s: { h: 312 } }],
+    ["消すと詰め直して、セクションが縮む", [[...abc, rm("a")]], { b: at(124, 152), c: at(360, 152), s: { h: 186 } }],
+    ["行の高さは、その行でいちばん背の高いものに合わせる", [[section, note("a", { h: 200 }), note("b"), note("c")]], { c: at(124, 368), s: { h: 402 } }],
+    ["座標で置いたものも、中心がセクションの中なら並べる", [[section, note("a")], [shape("z", 400, 160, { w: 90, h: 60 })]], { a: at(124, 152), z: at(360, 152, { h: 60 }) }],
+    ["セクションの外へ出すと、残りを詰める", [[...abc, set("a", { x: 900, y: 900 })]], { a: { x: 900, y: 900 }, b: at(124, 152), c: at(360, 152) }],
+    ["セクションの幅を変えると、列の幅が変わる", [[...abc, set("s", { w: 704 })]], { a: { x: 124, w: 320 }, b: { x: 460, w: 320 } }],
+    ["列の数を変えると、並べ直す", [[...abc, set("s", { cols: 1 })]], { a: { x: 124, y: 152, w: 456 }, b: { x: 124, y: 278 }, c: { x: 124, y: 404 }, s: { h: 438 } }],
+    ["後から cols を書いても並べる", [[cont("s", 100, 100, 504, 400), shape("p", 300, 300, { w: 100, h: 50 }), set("s", { cols: 2 })]], { p: at(124, 152, { h: 50 }), s: { h: 126 } }],
+    ["伸びたぶん、下のものを押し下げる。上にあるものは動かない", [[section, shape("top", 100, 0, { w: 100, h: 50 }), shape("u", 100, 300, { w: 100, h: 50 }), note("a"), note("b"), note("c")]], { s: { h: 312 }, u: { y: 472 }, top: { y: 0 } }],
+    ["縮んでも、下のものは上へ詰めない", [[section, shape("u", 100, 300, { w: 100, h: 50 }), note("a"), note("b"), note("c")], [rm("a")]], { s: { h: 186 }, u: { y: 472 } }],
+    ["伸びても届かないほど下にあるものは、動かない", [[section, shape("u", 100, 900)], [note("a"), note("b"), note("c")]], { s: { h: 312 }, u: { y: 900 } }],
+    ["同じ段の隣は動かず、下の段は隣の列もそろって下がる", [[section, cont("v", 700, 100, 504, 160), cont("t", 100, 320, 504, 160), cont("u", 700, 320, 504, 160), note("a"), note("b"), note("c")]], { v: { y: 100 }, t: { x: 100, y: 472 }, u: { x: 700, y: 472 } }],
+    ["真下に何も無ければ、隣の列の下の段は、セクションも付箋も動かない", [[section, cont("u", 700, 320, 504, 160), shape("p", 1300, 320), note("a"), note("b"), note("c")]], { s: { h: 312 }, u: { y: 320 }, p: { y: 320 } }],
+    ["上下に並んだ cols のセクションは、上が伸びると、下が中身ごと下がる", [[section, sec("s2", 100, 320), into("s2", { id: "p" })], [note("a"), note("b"), note("c")]], { s: { h: 312 }, s2: { y: 472, h: 186 }, p: at(124, 524) }],
+    ["畳まれたセクションに in で足した要素は、仮の場所が下の cols のセクションの枠に入っても、足した先に並ぶ", [[sec("low", 100, 212), section], [note("tall", { h: 200 })]], { tall: at(124, 152), s: { h: 276 }, low: { y: 436, h: 52 } }],
+    ["in で足した後に、同じまとまりで座標で置いた付箋も、中身になる", [[sec("s", 100, 100, { h: 312 }), note("a"), shape("b", 124, 278)]], { a: at(124, 152), b: at(360, 152) }],
+    ["in で足した後に、同じまとまりで左上へ動かした要素は、足した要素より前に入る", [[...abc, set("c", { x: 110, y: 140 })]], { c: at(124, 152), a: at(360, 152), b: at(124, 278) }],
+    ["cols を null にすると、並べ直しをやめる", [abc, [set("s", { cols: null })], [rm("a")]], { b: at(360, 152), c: at(124, 278), s: { h: 312 } }],
+    [
+      "文字・表・ガントを in で足すと、幅が列の幅になる",
+      [[section, note("tx", { type: "text", text: "x" }), note("tb", { type: "table", rows: [["1"]] }), note("g", { type: "gantt", bars: [{ name: "a", start: "2026-01", end: "2026-02" }] })]],
+      { tx: { w: 220 }, tb: { w: 220 }, g: { w: 220 } },
+    ],
+    ["画像は、縦横の比を保って列の幅になる", [[section, image]], { i: { w: 220, h: 165 } }],
+    ["セクションの幅を変えると、画像も列の幅に合わせ直す", [[section, image], [set("s", { w: 704 })]], { i: { w: 320, h: 240 } }],
+    ["要素を指すコメントは、並べ直しに付いていく", [abc, [{ op: "add", el: { id: "k", type: "comment", x: 130, y: 290, on: "c" } }], [rm("a")]], { c: at(360, 152), k: { x: 366, y: 164 } }],
+    [
+      "範囲のコメント、線、中のセクションは、並べ直しで動かない",
+      [abc, [{ op: "add", el: { id: "k", type: "comment", x: 130, y: 160, w: 50, h: 50 } }, { op: "add", el: { id: "l", type: "stroke", points: [[130, 160], [200, 200]] } }, cont("in", 130, 290, 100, 80)], [rm("a")]],
+      { k: { x: 130, y: 160 }, l: { points: [[130, 160], [200, 200]] }, in: { x: 130, y: 290 } },
+    ],
+    // 決めごと: locked は、人が画面で動かすのを止める印。並べ直しは止めない
+    ["固定した要素（locked）も、並べ直しで動く", [[section, note("a"), note("b", { locked: true })], [rm("a")]], { b: at(124, 152) }],
+    ["後から論点と結論を書くと、中身がそのぶん下がる", [abc, [set("s", { question: "来期の採用は何人か", answer: "2 人" })]], { a: at(124, 229), c: at(124, 355), s: { h: 389 } }],
+  ];
+  test.each(rows)("%s", (_name, batches, want) => expectBoard(run(batches), want));
 
-  test("並べ終わったボードに、関係のない操作をしても中身は動かない", () => {
-    const doc = build(abc);
-    const r = applyOps(doc, [{ op: "title", title: "x" }]);
-    expect(r.ok && r.value.updated).toEqual([]);
+  test("並べ直しで動いた要素は updated に入り、並びが変わらなければ order は返らない", () => {
+    const r = applyOps(build(abc), [rm("a")]);
+    expect(r.ok && r.value.updated.map((e) => e.id).sort()).toEqual(["b", "c", "s"]);
+    expect(r.ok && r.value.order).toBeUndefined();
   });
 
   test.each([
@@ -389,6 +454,172 @@ describe("cols を書いたセクションは、中身を列に詰めて並べ�
   ])("cols が %s なら断る", (_name, cols) => {
     const r = parseEl({ id: "s", type: "container", x: 0, y: 0, w: 100, h: 100, cols });
     expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("cols は");
+  });
+
+  test.each([[1], [8]])("cols が %d なら通る", (cols) => {
+    expect(parseEl({ id: "s", type: "container", x: 0, y: 0, w: 100, h: 100, cols }).ok).toBe(true);
+  });
+
+  test("cols のセクションに、in でセクションを足す操作は断る", () => {
+    const r = applyOps(build(abc), [{ op: "add", in: "s", el: { id: "sub", type: "container" } }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("in でセクションは足せない");
+  });
+});
+
+describe("cols を書いたセクションの並ぶ順は、要素の並びで決まり、場所を書いた要素だけが、書いた場所に入る", () => {
+  // a(124,152) b(360,152) / c(124,278) d(360,278)
+  const base = build([sec("s", 100, 100), ...["a", "b", "c", "d"].map((id) => into("s", { id }))]);
+  const grid = (...ids: string[]): Want => Object.fromEntries(ids.map((id, i) => [id, { x: 124 + (i % 2) * 236, y: 152 + Math.floor(i / 2) * 126 }]));
+
+  const rows: [string, unknown[][], Want][] = [
+    ["行の途中へ動かすと、そこに入る", [[set("d", { x: 350, y: 142 })]], grid("a", "d", "b", "c")],
+    ["行の下半分へ動かしても、その行に入る", [[set("d", { x: 350, y: 230 })]], grid("a", "d", "b", "c")],
+    ["先頭の要素の左上へ動かすと、先頭に入る", [[set("c", { x: 110, y: 140 })]], grid("c", "a", "b", "d")],
+    ["どの要素よりも後ろへ動かすと、末尾に入る", [[set("a", { x: 380, y: 300 })]], grid("b", "c", "d", "a")],
+    ["座標を書いて足すと、その場所に入る", [[shape("z", 350, 142)]], grid("a", "z", "b", "c", "d")],
+    ["行の右端より右へ動かすと、次の行の先頭の前に入る", [[set("d", { x: 380, y: 142 })]], grid("a", "b", "d", "c")],
+    ["同じ場所へ動かした要素どうしは、上の端の順に並ぶ", [[set("a", { x: 380, y: 300 }), set("b", { x: 370, y: 290 })]], grid("c", "d", "b", "a")],
+    ["同じ場所へ、同じ高さに動かした要素どうしは、左の端の順に並ぶ", [[set("a", { x: 380, y: 300 }), set("b", { x: 370, y: 300 })]], grid("c", "d", "b", "a")],
+    ["並べ直した後に order で並びを変えると、前に書いた場所でなく、要素の並びで並ぶ", [[set("d", { x: 350, y: 142 }), { op: "compact" }, { op: "order", id: "d", to: "front" }]], grid("a", "b", "c", "d")],
+    ["高さだけを変えた要素は、次の行に重なっても、順が変わらない", [[set("a", { h: 300 }), set("b", { h: 300 })]], { a: { x: 124, y: 152 }, b: { x: 360, y: 152 }, c: { x: 124, y: 468 }, d: { x: 360, y: 468 }, s: { h: 502 } }],
+    ["order で要素の並びを変えると、並ぶ順も変わる", [[{ op: "order", id: "a", to: "front" }]], grid("b", "c", "d", "a")],
+    ["消した要素と、詰め直しで動いた要素を、1 つのまとまりで元の位置へ戻すと、元の並びに戻る", [[rm("b")], [set("c", { x: 124, y: 278 }), set("d", { x: 360, y: 278 }), shape("b", 360, 152)]], { ...grid("a", "b", "c", "d"), s: { h: 312 } }],
+  ];
+  test.each(rows)("%s", (_name, batches, want) => expectBoard(run(batches, base), want));
+
+  test("背の違う行の、次の行の先頭へ動かすと、そこに入る", () => {
+    const tall = build([sec("s", 100, 100), into("s", { id: "a", h: 200 }), ...["b", "c", "d", "e"].map((id) => into("s", { id }))]);
+    expectBoard(build([set("e", { x: 114, y: 358 })], tall), { a: { x: 124, y: 152 }, b: { x: 360, y: 152 }, e: { x: 124, y: 368 }, c: { x: 360, y: 368 }, d: { x: 124, y: 494 } });
+  });
+
+  // a1・a2 は高さ 60、a3・a4 は 110。外に、高さ 200 の T
+  const low = [sec("t1", 0, 0), into("t1", { id: "a1", h: 60 }), into("t1", { id: "a2", h: 60 }), into("t1", { id: "a3" }), into("t1", { id: "a4" }), shape("T", 600, 0, { h: 200 })];
+  // 3 列に、a（高さ 40）、T（高さ 200）、c（高さ 40）
+  const mixed = [sec("t1", 0, 0, { cols: 3 }), into("t1", { id: "a", h: 40 }), into("t1", { id: "T", h: 200 }), into("t1", { id: "c", h: 40 })];
+  // 2 列に、a（高さ 40）と T（高さ 200）の行、c と d の行。外に z
+  const steps = [sec("t1", 0, 0), into("t1", { id: "a", h: 40 }), into("t1", { id: "T", h: 200 }), into("t1", { id: "c" }), into("t1", { id: "d" }), shape("z", 600, 0)];
+  const uneven: [string, unknown[][], Want][] = [
+    ["行の先頭の要素より下でも、その行でいちばん背の高い要素の下の端までなら、その行に入る", [steps, [set("z", { x: 10, y: 150 })]], { z: { x: 24, y: 52 }, a: { x: 260, y: 52 }, T: { x: 24, y: 178 }, d: { x: 24, y: 394 } }],
+    ["行の要素より背の高い要素を、先頭の左上へ動かすと、先頭に入る", [low, [set("T", { x: 10, y: 40 })]], { T: { x: 24, y: 52 }, a1: { x: 260, y: 52 }, a2: { x: 24, y: 268 }, a3: { x: 260, y: 268 }, a4: { x: 24, y: 394 } }],
+    ["背の高い要素を先頭へ動かした後、元の座標へ戻すと、元の並びに戻る", [mixed, [set("T", { x: 10, y: 40 })], [set("T", { x: 181, y: 52 }), set("a", { x: 24 })]], { a: { x: 24 }, T: { x: 181 }, c: { x: 338 } }],
+  ];
+  test.each(uneven)("%s", (_name, batches, want) => expectBoard(run(batches), want));
+
+  test("並ぶ順を変えると、中身が占めていた並びの位置の中で入れ替わり、order が返る", () => {
+    // l は中身でない要素。重なり順で、中身より前面のままにする
+    const withLine = build([{ op: "add", el: { id: "l", type: "stroke", points: [[0, 0], [10, 10]] } }], base);
+    const r = applyOps(withLine, [set("d", { x: 350, y: 142 })]);
+    expect(r.ok && r.value.doc.elements.map((e) => e.id)).toEqual(["s", "a", "d", "b", "c", "l"]);
+    expect(r.ok && r.value.order).toEqual(["s", "a", "d", "b", "c", "l"]);
+  });
+});
+
+describe("cols を書いたセクションは、動かすと中身を連れていき、伸びると下を押し下げ、外の要素を中身にしない", () => {
+  // t1 は原点、幅 504、2 列。a1(24,52) a2(260,52) / a3(24,178) a4(260,178)、高さ 312
+  const base4 = [sec("t1", 0, 0), ...["a1", "a2", "a3", "a4"].map((id) => into("t1", { id }))];
+  const base = build(base4);
+  const grid = { a1: { x: 24, y: 52 }, a2: { x: 260, y: 52 }, a3: { x: 24, y: 178 }, a4: { x: 260, y: 178 } };
+  const movedX = { t1: { x: 600, h: 312 }, a1: { x: 624, y: 52 }, a2: { x: 860, y: 52 }, a3: { x: 624, y: 178 }, a4: { x: 860, y: 178 } };
+  const movedY = { t1: { y: 126, h: 312 }, a1: { x: 24, y: 178 }, a2: { x: 260, y: 178 }, a3: { x: 24, y: 304 }, a4: { x: 260, y: 304 } };
+  const comment = (id: string, x: number, y: number, extra: Record<string, unknown>) => ({ op: "add", el: { id, type: "comment", x, y, ...extra } });
+  const stroke = (id: string, points: number[][]) => ({ op: "add", el: { id, type: "stroke", points } });
+
+  const rows: [string, unknown[][], Want][] = [
+    // 動かす
+    ["セクション、中身の順に全部を動かすと、中身ごと移る", [[set("t1", { x: 600 }), set("a1", { x: 624 }), set("a2", { x: 860 }), set("a3", { x: 624 }), set("a4", { x: 860 })]], movedX],
+    ["中身、セクションの順に全部を動かしても、中身は 1 回だけ動く", [[set("a1", { y: 178 }), set("a2", { y: 178 }), set("a3", { y: 304 }), set("a4", { y: 304 }), set("t1", { y: 126 })]], movedY],
+    ["中身の 1 つ、セクション、残りの中身の順でも、同じ並びで移る", [[set("a1", { y: 178 }), set("t1", { y: 126 }), set("a2", { y: 178 }), set("a3", { y: 304 }), set("a4", { y: 304 })]], movedY],
+    ["セクションだけを動かすと、中身が付いていく", [[set("t1", { x: 600 })]], movedX],
+    ["セクションを動かすと、枠の中のコメントは 1 回だけ動く", [[comment("k", 30, 60, { on: "a1" })], [set("t1", { x: 600 })]], { k: { x: 630, y: 60 } }],
+    ["セクションを動かすと、枠の外にあって中身を指すコメントも動く", [[comment("k", 600, 60, { on: "a2" })], [set("t1", { x: 1000 })]], { k: { x: 1600, y: 60 } }],
+    [
+      "セクションを動かすと、中のセクションとその中身、座標の矢印、線、範囲のコメントも動く",
+      [
+        // inner は中心が t1 の中。m は inner の中身で、t1 の枠の外にある
+        [cont("inner", 300, 200, 400, 100), stroke("m", [[600, 220], [650, 260]]), { op: "add", el: { id: "ar", type: "arrow", from: [30, 60], to: [300, 200] } }, stroke("l", [[30, 60], [60, 90]]), comment("rc", 30, 200, { w: 60, h: 60 })],
+        [set("t1", { x: 1000 })],
+      ],
+      { inner: { x: 1300, y: 200 }, m: { points: [[1600, 220], [1650, 260]] }, ar: { from: [1030, 60], to: [1300, 200] }, l: { points: [[1030, 60], [1060, 90]] }, rc: { x: 1030, y: 200 } },
+    ],
+    // 足す
+    ["背の高い要素を in で足しても、末尾に入る", [[into("t1", { id: "tall", h: 400 })]], { ...grid, tall: { x: 24, y: 304 }, t1: { h: 728 } }],
+    ["in で足した後に、座標を書いて枠の外へ動かした要素は、中身にならない", [[into("t1", { id: "a5" }), set("a5", { x: 900, y: 900 })]], { a5: { x: 900, y: 900 }, t1: { h: 312 } }],
+    ["in で足した後に消して、同じ id を枠の外へ座標で足した要素は、中身にならない", [[into("t1", { id: "a5" }), rm("a5"), shape("a5", 900, 900)]], { a5: { x: 900, y: 900 }, t1: { h: 312 } }],
+    ["in で足した要素に、同じまとまりで付けたコメントは、書いた場所に残る", [[into("t1", { id: "a5" }), comment("k", 30, 310, { on: "a5" })]], { a5: { x: 24, y: 304 }, k: { x: 30, y: 310 } }],
+    ["in で足した後に、同じまとまりで cols を外しても、足した要素は並べた場所にある", [[into("t1", { id: "a5" }), set("t1", { cols: null })]], { a5: { x: 24, y: 304 } }],
+    ["消した後に、同じまとまりで compact すると、空いた段が詰まる", [[into("t1", { id: "a5" }), shape("u", 0, 498)], [rm("a5"), rm("a4"), rm("a3"), { op: "compact" }]], { t1: { h: 186 }, u: { y: 246 } }],
+    // 伸びる、高さを書く
+    ["下の要素を指すコメントは、押し下げに付いていく", [[shape("u", 0, 372), comment("k", 500, 10, { on: "u" })], [into("t1", { id: "a5" })]], { u: { y: 498 }, k: { x: 500, y: 136 } }],
+    ["下の端にかかる線は、押し下げない。その下のものも、余計に押し下げない", [[stroke("l", [[30, 300], [60, 330]]), shape("below", 0, 600)], [into("t1", { id: "a5" })]], { l: { points: [[30, 300], [60, 330]] }, below: { y: 600 }, t1: { h: 438 } }],
+    ["枠の横の端にかかるだけの背の高い要素は、押し下げない。その下のものも、余計に押し下げない", [[shape("side", 490, -40, { h: 800 }), shape("below", 0, 500)], [into("t1", { id: "a5" })]], { side: { y: -40 }, below: { y: 500 }, t1: { h: 438 } }],
+    ["下の端に重なって始まるセクションは、中身ごと押し下げる", [[cont("v", 0, 300, 504, 300), shape("m", 24, 352)], [into("t1", { id: "a5" })]], { a5: { x: 24, y: 304 }, v: { y: 498 }, m: { x: 24, y: 550 } }],
+    // 「元に戻す」が送る形: 中身の元の座標と、セクションの元の h を、1 つのまとまりで書く
+    ["最後の行の中身を消した後、元の座標へ足して h を戻すと、中身に戻る", [[rm("a3"), rm("a4")], [shape("a3", 24, 178), shape("a4", 260, 178), set("t1", { h: 312 })]], { ...grid, t1: { h: 312 } }],
+    ["最後の行の中身を外へ出した後、元の座標へ戻して h を戻すと、中身に戻る", [[set("a3", { x: 900, y: 900 }), set("a4", { x: 900, y: 1100 })], [set("a3", { x: 24, y: 178 }), set("a4", { x: 260, y: 178 }), set("t1", { h: 312 })]], { ...grid, t1: { h: 312 } }],
+    ["h を戻す高さまでの伸びでは、すぐ下にあるセクションを押し下げない", [[rm("a3"), rm("a4")], [cont("u", 0, 330, 504, 100)], [shape("a3", 24, 178), shape("a4", 260, 178), set("t1", { h: 312 })]], { ...grid, t1: { h: 312 }, u: { y: 330 } }],
+    ["伸びた枠を縮める h と、押し下げられた外の要素の元の座標を書くと、外の要素は中身にならない", [[shape("b", 24, 372)], [into("t1", { id: "a5" })], [rm("a5"), set("b", { y: 372 }), set("t1", { h: 312 })]], { ...grid, t1: { h: 312 }, b: { x: 24, y: 372 } }],
+    ["h を小さく書いても、枠の中へ置いた要素は中身になる", [[set("t1", { h: 100 }), shape("z", 24, 200)]], { z: { x: 260, y: 178 }, a4: { x: 24, y: 304 }, t1: { h: 438 } }],
+    ["h を大きく書いても、伸びた枠に入る外の要素は押し下げる", [[shape("b", 0, 372)], [into("t1", { id: "a5" }), set("t1", { h: 800 })]], { t1: { h: 438 }, b: { y: 498 } }],
+    ["書かれた h は、次の並べ直しまでしか効かない", [[set("t1", { h: 800 }), { op: "compact" }, shape("z", 24, 500)]], { z: { x: 24, y: 500 }, t1: { h: 312 } }],
+    ["中身の高さを、中心が枠の下に出るほど増やしても、中身のまま", [[set("a1", { h: 700 })]], { a1: { x: 24, y: 52 }, a3: { x: 24, y: 768 }, t1: { h: 902 } }],
+    ["h を set で増やしても、高さは中身のままで、下のものを押し下げない", [[shape("b", 0, 372)], [set("t1", { h: 800 })]], { t1: { h: 312 }, b: { y: 372 } }],
+    ["下の端にかかっていた外の要素は、中身にならず、押し下げられる。横の列で、下の端より上から始まるものは動かない", [[shape("s", 24, 280), cont("v", 700, 290, 300, 100)], [into("t1", { id: "a5" })]], { ...grid, a5: { x: 24, y: 304 }, s: { x: 24, y: 498 }, v: { y: 290 }, t1: { h: 438 } }],
+    ["下の端にかかる外の要素があるときに、中身の高さを増やしても、その要素は中身にならない", [[shape("s", 24, 280)], [set("a3", { h: 200 })]], { ...grid, s: { x: 24, y: 462 }, t1: { h: 402 } }],
+    ["枠の上の端より上から始まり、中心が下の端より下にある外の要素も、中身にならず、押し下げられる", [[shape("s", 300, -40, { h: 800 })], [into("t1", { id: "a5" })]], { ...grid, a5: { x: 24, y: 304 }, s: { x: 300, y: 498 }, t1: { h: 438 } }],
+    ["少し縮んだときは、下の端にかかるセクションを動かさない", [[cont("v", 0, 300, 504, 300)], [set("a3", { h: 100 }), set("a4", { h: 100 })]], { t1: { h: 302 }, v: { y: 300 } }],
+    ["先に set で動かした要素は、後からセクションを動かしても、連れていかず、位置で中身かどうかを読む", [[set("a1", { x: 30, y: 60 }), set("t1", { x: 1000 })]], { a1: { x: 30, y: 60 }, a2: { x: 1024, y: 52 }, a3: { x: 1260, y: 52 }, t1: { x: 1000 } }],
+    ["先に set で動かしたコメントは、指す要素を動かしても、もう一度は動かない", [[comment("k", 30, 200, { on: "a3" })], [set("k", { y: 300 }), set("a3", { x: 900, y: 900 })]], { k: { x: 30, y: 300 }, a3: { x: 900, y: 900 } }],
+    ["少し縮んだときは、すぐ下にあるものを押し下げない", [[shape("u", 0, 332)], [set("a3", { h: 100 }), set("a4", { h: 100 })]], { t1: { h: 302 }, u: { y: 332 } }],
+  ];
+  test.each(rows)("%s", (_name, batches, want) => expectBoard(run(batches, base), want));
+
+  // 空のボードから書く
+  const tb = (n: number) => Array.from({ length: n }, (_, i) => [String(i)]);
+  const fresh: [string, unknown[][], Want][] = [
+    ["cols のセクションを足した後に、同じまとまりで座標で置いた付箋は、中身になる", [[sec("t1", 0, 0, { h: 312 }), { op: "add", el: { id: "l", type: "stroke", points: [[0, 0], [10, 10]] } }, shape("a1", 24, 52)]], { a1: { x: 24, y: 52 }, t1: { h: 186 } }],
+    ["3 列で、中身、セクションの順に全部を動かしても、並びは変わらない", [[sec("t1", 0, 0, { cols: 3 }), ...["a1", "a2", "a3"].map((id) => into("t1", { id }))], [set("a1", { x: 224 }), set("a2", { x: 381 }), set("a3", { x: 538 }), set("t1", { x: 200 })]], { a1: { x: 224 }, a2: { x: 381 }, a3: { x: 538 } }],
+    ["cols と h を同じ set で書いても、下にあった外の要素は中身にならない", [[cont("s", 0, 0, 504, 160), shape("in1", 24, 52, { h: 40 }), shape("out", 24, 400)], [set("s", { cols: 2, h: 600 })]], { s: { h: 116 }, out: { x: 24, y: 400 } }],
+    ["cols のセクションを囲むセクションは、中の cols のセクションが伸びても動かない", [[cont("O", 0, 0, 800, 500), sec("t1", 24, 60), into("t1", { id: "a1" }), into("t1", { id: "a2" }), shape("sib", 560, 60)], [into("t1", { id: "a3" })]], { O: { y: 0 }, sib: { y: 60 }, t1: { y: 60, h: 312 } }],
+    ["中にセクションがあっても、枠の中の付箋は全部並べる", [[...base4.slice(0, 4)], [cont("inner", 260, 178, 220, 200)], [into("t1", { id: "a4" })], [into("t1", { id: "a5" })]], { a4: { x: 260, y: 178 }, a5: { x: 24, y: 304 }, t1: { h: 438 }, inner: { y: 178 } }],
+    [
+      "範囲のコメントを先に書けば、同じまとまりで座標で置いた線とセクションも、枠の外へ押し出されない",
+      [[...base4, { op: "add", el: { id: "rc", type: "comment", x: 30, y: 200, w: 60, h: 60 } }, { op: "add", el: { id: "st", type: "stroke", points: [[30, 200], [60, 230]] } }, cont("inner", 300, 200, 150, 90)]],
+      { rc: { y: 200 }, st: { points: [[30, 200], [60, 230]] }, inner: { y: 200 } },
+    ],
+    [
+      "畳まれた cols のセクションに in で足した要素は、仮の場所が下のセクションに入っても、そのセクションを伸ばさない",
+      [[sec("t1", 0, 0), cont("low", 0, 112, 504, 300), shape("m1", 24, 320)], [into("t1", { id: "tb", type: "table", rows: tb(6) }), set("tb", { rows: tb(9) })]],
+      { low: { h: 300 } },
+    ],
+    ["in で足して仮の場所にある要素は、下のセクションの中身が伸びても、そのセクションの高さに数えない", [[sec("t1", 0, 0), cont("low", 0, 112, 504, 300), shape("m1", 24, 164)], [into("t1", { id: "tall", h: 400 }), set("m1", { h: 150 })]], { low: { h: 300 } }],
+    ["セクションごと動かした中身は、動かした先に、まだ縮んでいない別のセクションの枠があっても、元のセクションの中身のまま", [[sec("s", 0, 0), into("s", { id: "a" }), sec("t", 0, 246), into("t", { id: "t1" }), into("t", { id: "t2" })], [set("a", { h: 400 })], [set("a", { h: 110 }), set("t", { y: 246 })]], { s: { h: 186 }, t: { y: 246, h: 186 }, t1: { x: 24, y: 298 }, t2: { x: 260, y: 298 } }],
+    ["セクションを動かした後に、同じまとまりで消すと、連れていった中身は、位置で中身かどうかを読む", [[sec("A", 0, 0), into("A", { id: "a1" }), sec("B", 600, 0), into("B", { id: "b1" })], [set("A", { x: 600 }), rm("A")]], { a1: { x: 624, y: 52 }, b1: { x: 860, y: 52 } }],
+    ["in で足した後の above は、並べ終わった位置を見る", [[sec("t1", 0, 0)], [into("t1", { id: "a1" }), { op: "add", above: "a1", el: { id: "v", type: "shape" } }]], { v: { x: 0, y: 0 }, t1: { y: 170 }, a1: { x: 24, y: 222 } }],
+    ["in で足した後の、場所を書かない add は、並べ終わった全体の右に置く", [[sec("t1", 0, 0), into("t1", { id: "i", type: "image", src: "x.png", w: 1000, h: 200 }), { op: "add", el: { id: "v", type: "shape" } }]], { i: { w: 220, h: 44 }, v: { x: 564, y: 0 } }],
+    [
+      "in で足した後の、cols の無いセクションへの in は、並べ終わった位置を見る",
+      [[sec("t1", 0, 0), cont("low", 0, 112, 504, 300)], [into("t1", { id: "tall", h: 200 }), into("low", { id: "x" })]],
+      { low: { y: 336 }, x: { x: 24, y: 388 } },
+    ],
+  ];
+  test.each(fresh)("%s", (_name, batches, want) => expectBoard(run(batches), want));
+
+  test("in で足した後の、場所を書かない型は、並べ終わった全体の右に置く", () => {
+    const doc = build([sec("t1", 0, 0), into("t1", { id: "i", type: "image", src: "x.png", w: 1000, h: 200 }), { op: "template", kind: "tree", id: "tr", root: "根" }]);
+    expect(Math.min(...doc.elements.filter((e) => e.id.startsWith("tr")).map((e) => e.x ?? 0))).toBe(564);
+  });
+
+  test("このまとまりで足した要素は added にだけ入り、並べ直しと押し下げで動いても updated に入らない", () => {
+    const r = applyOps(base, [shape("u", 0, 372), into("t1", { id: "a5" })]);
+    expect(r.ok && r.value.added.map((e) => e.id).sort()).toEqual(["a5", "u"]);
+    expect(r.ok && r.value.updated.map((e) => e.id)).toEqual(["t1"]);
+    expect(r.ok && find(r.value.doc, "u")).toMatchObject({ y: 498 });
+  });
+
+  test("列の幅は、40 より狭くならない", () => {
+    expect(colWidth({ x: 0, y: 0, w: 200, h: 0 }, 8)).toBe(40);
   });
 });
 
@@ -420,9 +651,16 @@ describe("付箋の欄（title・who・status・carriedFrom）", () => {
 describe("セクションの中身を置き始める高さ", () => {
   test.each([
     ["題名だけ", {}, 52],
-    ["論点 1 行", { question: "来期の採用は何人か" }, 52 + 26 + 8],
-    ["論点と結論", { question: "来期の採用は何人か", answer: "2 人" }, 52 + 26 + 8 + 23 + 20],
-    ["論点が折り返す", { w: 200, question: "来期の採用は何人にするか" }, 52 + 51 + 8],
+    ["論点 1 行", { question: "来期の採用は何人か" }, 86],
+    ["論点と結論", { question: "来期の採用は何人か", answer: "2 人" }, 129],
+    ["論点が折り返す", { w: 200, question: "来期の採用は何人にするか" }, 111],
+    ["結論だけ", { answer: "2 人" }, 95],
+    ["結論が全角 27 文字なら 1 行", { answer: "あ".repeat(27) }, 95],
+    ["結論が全角 28 文字なら 2 行", { answer: "あ".repeat(28) }, 117],
+    ["結論の改行は、行に数える", { answer: "2 人\n4 月入社" }, 117],
+    ["論点が全角 25 文字なら 1 行", { question: "あ".repeat(25) }, 86],
+    ["論点が全角 26 文字なら 2 行", { question: "あ".repeat(26) }, 111],
+    ["論点の改行は、行に数える", { question: "何人か\nいつか" }, 111],
   ])("%s", (_name, extra, expected) => {
     expect(sectionTop({ id: "s", type: "container", x: 0, y: 0, w: 504, h: 100, ...extra })).toBe(expected);
   });

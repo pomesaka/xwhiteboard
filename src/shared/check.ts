@@ -1,6 +1,6 @@
 // ボードの見た目の問題を、描かずに測る。エージェントが、スクショを見なくても崩れに気づけるようにする。
 // 文字と表の大きさは見積もり（model.ts の sizeOf）なので、画面で測った値とは数 px ずれる。
-import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_TITLE_FONT, PAD, TITLE_H, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type Point, type ShapeKind } from "./model.ts";
+import { sectionTop, FONT, NOTE_SUB_FONT, NOTE_TITLE_FONT, PAD, STATUS_LABEL, TITLE_H, statusBadge, boxOf, colWidth, isSolid, textWidth, type Box, type Doc, type El, type Point, type ShapeKind } from "./model.ts";
 import { FILL, HIGHLIGHT, PAPER, TABLE_CELL, TABLE_HEAD, colorDistance } from "./colors.ts";
 import { ganttLayout } from "./gantt.ts";
 import type { Color } from "./model.ts";
@@ -41,7 +41,9 @@ export type IssueKind =
   /** 付箋の見出し（title）が 1 行に入らない */
   | "long-title"
   /** セクションに論点（question）があって、結論（answer）が無い */
-  | "open-question";
+  | "open-question"
+  /** 列で並べるセクション（cols）の中に、別のセクションがある */
+  | "nested-section";
 
 export interface Issue {
   kind: IssueKind;
@@ -91,6 +93,18 @@ export interface CheckContext {
   /** ほかのボードへのリンクの行き先（相対パス）に、ファイルがあるか */
   boardExists?: (ref: string) => boolean;
 }
+
+/**
+ * 札（tag）に手で書いた状態。札が状態の名前だけか、状態の名前の後ろに区切りが続くものを拾う（「決定」「決定 · 竹内さん」「決定（竹内）」）。
+ * WHY 区切りを求める: 状態の名前で始まるだけの語（「決定事項の確認」「優先度 高」）は、状態ではない。
+ */
+const HANDWRITTEN_STATUS = new RegExp(`^\\s*(?:${Object.values(STATUS_LABEL).map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?:$|[\\s·・:：/（(→])`);
+/**
+ * 手で書いた持ち越しの日付。区切り（「·」「・」「→」、開き括弧）の後ろの「M/D から」か、行の全体が「M/D から」のものを拾う。
+ * 札と、本文の各行を見る。
+ * WHY 区切りか行の全体を求める: 「4/1 から新体制で始める」「2/3 から 3/4 に上げる」のような、ふつうの文の日付や分数は持ち越しではない。
+ */
+const HANDWRITTEN_CARRIED = /(?:[·・→（(]\s*\d+\/\d+\s*から|^\s*\d+\/\d+\s*から\s*$)/m;
 
 const round = (n: number): number => Math.round(n);
 
@@ -165,14 +179,31 @@ function innerSize(kind: ShapeKind, w: number, h: number): { w: number; h: numbe
   }
 }
 
-/** 図形の文字が収まる、いちばん大きい文字の大きさ。いちばん小さくしても収まらなければ null */
+/**
+ * 太字の文字の幅。付箋の見出しに使う。
+ * WHY textWidth を使わない: textWidth は半角を一律 0.58em で見積もる。太字の半角はそれより広く、
+ * 見積もりでは 1 行に入る見出し（「VALUE 案を外向けに掲げる」）が、画面では折り返した。
+ * 測った値（2026-11-18、Chrome、Hiragino Sans の太字 15px、1 文字の px）:
+ * 全角 15.0。大文字は W 16.2、M 15.1、そのほかは O と Q の 12.9 がいちばん広い（平均 11.7）。数字はどれも 11.1。
+ * 小文字は平均 9.6（m は 15.8）。記号は % 14.5、@ 14.3、& 13.4。空白 5.0。
+ * WHY 大文字と数字は、いちばん広い字の幅で見積もる: 平均で見積もると、M や W の並ぶ見出しが、検査に出ないまま画面で折り返す。
+ * 多めに出るぶんには、見出しを短くすれば済む。
+ * WHY 小文字は平均: 英単語の見出しはよくあり、いちばん広い字（m）で見積もると、入る見出しまで検査に出る。
+ */
+function boldWidth(s: string, px: number): number {
+  let em = 0;
+  for (const ch of s) em += (ch.codePointAt(0) ?? 0) > 0xff ? 1 : /[WM%@&]/.test(ch) ? 1.08 : /[A-Z]/.test(ch) ? 0.86 : /[0-9]/.test(ch) ? 0.75 : 0.64;
+  return em * px;
+}
+
 /** 付箋の見出しが、何行になるか。見出しが無ければ 0 */
 function titleLines(el: El): number {
   if (!el.title) return 0;
   const inner = innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0);
-  return Math.max(1, Math.ceil(textWidth(el.title, NOTE_TITLE_FONT) / Math.max(NOTE_TITLE_FONT, inner.w)));
+  return Math.max(1, Math.ceil(boldWidth(el.title, NOTE_TITLE_FONT) / Math.max(NOTE_TITLE_FONT, inner.w)));
 }
 
+/** 図形の文字が収まる、いちばん大きい文字の大きさ。いちばん小さくしても収まらなければ null */
 function fittedFont(el: El): number | null {
   const inner = innerSize(el.shape ?? "note", el.w ?? 0, el.h ?? 0);
   // 本文が空なら、行は無い（見出しだけの付箋）
@@ -287,6 +318,20 @@ export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
     const w = colWidth(box, el.cols);
     if (w < MIN_COL_W) issues.push({ kind: "narrow-column", ids: [el.id], message: `セクション ${el.id} の 1 列の幅が ${w} しかない（cols ${el.cols}）。cols を減らすか、セクションの w を増やす`, px: w });
   }
+  // 列で並べるセクションの中の、別のセクション。
+  // 列で並べるセクションは、中のセクションを枠として扱わない（中のセクションの中身も、外側の列に並ぶ）ので、入れ子が崩れる
+  for (const outer of doc.elements) {
+    const box = outer.type === "container" && outer.cols !== undefined ? boxOf(outer) : null;
+    if (!box) continue;
+    for (const inner of doc.elements) {
+      const b = inner.type === "container" && inner.id !== outer.id ? boxOf(inner) : null;
+      if (!b) continue;
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      if (cx < box.x || cx > box.x + box.w || cy < box.y || cy > box.y + box.h) continue;
+      issues.push({ kind: "nested-section", ids: [inner.id, outer.id], message: `セクション ${inner.id} が、列で並べるセクション ${outer.id} の中にある。列で並べるセクションは、中のセクションを扱わない。${inner.id} を外へ出すか、${outer.id} の cols を消して座標で置く` });
+    }
+  }
   const byId = new Map(doc.elements.map((e) => [e.id, e]));
   const boxed = (list: El[]): { el: El; box: Box }[] =>
     list.flatMap((el) => {
@@ -370,8 +415,8 @@ export function checkBoard(doc: Doc, ctx: CheckContext = {}): Issue[] {
     if (el.type !== "shape") continue;
     // 付箋の欄。手で書いた見出し・状態・持ち越しの日付は、欄に書けば、見た目がそろい、検査と一覧で読める
     if (!el.title && /^\*\*[^*\n]+\*\*\n/.test(el.text ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の 1 行めの太字は、見出しとして title に書く（本文は text に残す）` });
-    if (el.carriedFrom === undefined && /\d+\/\d+\s*から/.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
-    if (el.status === undefined && /^(決定|未決|持ち越し|優先)/.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（decided・open・carried・priority）。発言者は who に書く` });
+    if (el.carriedFrom === undefined && HANDWRITTEN_CARRIED.test(`${el.tag ?? ""}\n${plainText(el.text ?? "")}`)) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の持ち越しの日付（「11/11 から」）は、carriedFrom に YYYY-MM-DD で書く` });
+    if (el.status === undefined && HANDWRITTEN_STATUS.test(el.tag ?? "")) issues.push({ kind: "handwritten-field", ids: [el.id], message: `${el.id} の札（tag）の状態は、status に書く（decided・open・carried・priority）。発言者は who に書く` });
     if (titleLines(el) > 1) issues.push({ kind: "long-title", ids: [el.id], message: `${el.id} の見出し（title）が 1 行に入らない。短くして、残りは text に書く`, px: titleLines(el) });
     if (!el.text && !el.title) continue;
     const px = fittedFont(el);

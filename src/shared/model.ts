@@ -1,4 +1,4 @@
-// ボードのデータの形と、操作（add・set・rm・title）の適用。
+// ボードのデータの形と、操作（add・set・rm・say・order・compact・title・template）の適用。
 // サーバー、CLI、ブラウザ、変換が同じ規則で要素を検証できるよう、ここだけに置く。
 import { GANTT_STATUS, GANTT_UNITS, ganttLayout, parseDay, type GanttBar, type GanttMark, type GanttSegment, type GanttUnit } from "./gantt.ts";
 import { isBoardRef, plainText } from "./rich.ts";
@@ -180,11 +180,11 @@ const REQUIRED: Record<ElType, readonly string[]> = {
   stroke: ["points"],
 };
 
-const DEFAULT_SIZE: Partial<Record<ElType, { w: number; h: number }>> = {
+export const DEFAULT_SIZE = {
   shape: { w: 220, h: 110 },
   container: { w: 504, h: 160 },
   image: { w: 320, h: 240 },
-};
+} satisfies Partial<Record<ElType, { w: number; h: number }>>;
 
 /** セクションの中身を並べる列の数の上限 */
 export const MAX_COLS = 8;
@@ -464,7 +464,7 @@ export const SECTION_A_FONT = 15;
 export function sectionTop(c: El): number {
   const inner = Math.max(SECTION_Q_FONT, (c.w ?? 0) - PAD * 2);
   const lines = (text: string, px: number, width: number): number => text.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(textWidth(l, px) / width)), 0);
-  // 論点は行の高さ 1.4 と下の間 8。結論は行の高さ 1.5、帯の上下の余白 12、左右の余白 20（「→ 」のぶんを含めて 2 文字ぶん狭い）、下の間 8
+  // 論点は行の高さ 1.4 と下の間 8。結論は行の高さ 1.5、帯の上下の余白 12、左右の余白 20（結論の札のぶん、2 文字ぶん狭い）、下の間 8
   const q = c.question ? Math.ceil(lines(c.question, SECTION_Q_FONT, inner) * SECTION_Q_FONT * 1.4) + 8 : 0;
   const a = c.answer ? Math.ceil(lines(c.answer, SECTION_A_FONT, inner - 20 - SECTION_A_FONT * 2) * SECTION_A_FONT * 1.5) + 12 + 8 : 0;
   return TITLE_H + q + a;
@@ -690,16 +690,23 @@ function overlaps(a: Box, b: Box, gap: number): boolean {
  * WHY: 人がドラッグで出し入れしても、エージェントが座標で置いても、親の id を書き直さずに済む。
  */
 export function membersOf(els: Iterable<El>, container: El): El[] {
+  return insideOf(els, container).filter((el) => el.type !== "arrow" && el.type !== "container");
+}
+
+function centerIn(b: Box, c: Box): boolean {
+  const cx = b.x + b.w / 2;
+  const cy = b.y + b.h / 2;
+  return cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h;
+}
+
+/** 中心がセクションの枠の中にある要素の全部。中身（membersOf）に加えて、中のセクションと、端を座標で書いた矢印も入る */
+function insideOf(els: Iterable<El>, container: El): El[] {
   const c = boxOf(container);
   if (!c) return [];
   const out: El[] = [];
   for (const el of els) {
-    if (el.id === container.id || el.type === "arrow" || el.type === "container") continue;
-    const b = boxOf(el);
-    if (!b) continue;
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2;
-    if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) out.push(el);
+    const b = el.id === container.id ? null : boxOf(el);
+    if (b && centerIn(b, c)) out.push(el);
   }
   return out;
 }
@@ -721,6 +728,8 @@ interface Unit {
   head: string;
   box: Box;
   ids: string[];
+  /** section は、セクションとその中身。solid は、場所をふさぐ要素 1 つ。other は、線・コメント・座標の矢印 1 つ */
+  kind: "section" | "solid" | "other";
 }
 
 /**
@@ -739,12 +748,12 @@ function unitsOf(els: El[]): Unit[] {
       claimed.add(m.id);
       ids.push(m.id);
     }
-    out.push({ head: c.id, box, ids });
+    out.push({ head: c.id, box, ids, kind: "section" });
   }
   for (const e of els) {
     if (e.type === "container" || claimed.has(e.id)) continue;
     const box = boxOf(e);
-    if (box) out.push({ head: e.id, box, ids: [e.id] });
+    if (box) out.push({ head: e.id, box, ids: [e.id], kind: isSolid(e) ? "solid" : "other" });
   }
   return out;
 }
@@ -754,26 +763,206 @@ export function colWidth(c: Box, cols: number): number {
   return Math.max(40, Math.floor((c.w - PAD * 2 - GAP * (cols - 1)) / cols));
 }
 
+
 /**
- * 列で並べるセクションの中身を、並べる順にして返す。順番は、今の位置から読む（上の行から、行の中は左から）。
- * WHY 位置から読む: 人がドラッグで入れ替えても、エージェントが座標で置いても、順番を別の項目に書き直さずに済む。
- * 行は、上の端が前の行の下の端より上にあるものをまとめる。背の違う付箋が並んだ行も、1 つの行と読める。
+ * セクションが before から after へ下に伸びたときに、下へずらすまとまりと、ずらす量を返す。ずらすものが無ければ null。
+ * 伸びる前の下の端より下から始まり、横が重なるまとまりのうち、いちばん上のものの高さから下を、横の列も含めて全部ずらす。
+ * WHY 段ごと: 届いたものだけをずらすと、横に並んだセクションの上がそろわなくなる。
+ * gap は、伸びた下の端と、ずらしたものの間に空ける量。
+ *
+ * cols は、列で並べるセクションが伸びたときに渡す。
+ * - 伸びた枠に中心が入る、場所をふさぐ要素を、下の端より上から始まっていても、一緒にずらす。
+ *   中心が下の端より下にあって、伸びた枠にかかるセクションも、一緒にずらす。
+ *   WHY: 残すと、その要素か、そのセクションの中身が、並べる中身になる。線・コメント・矢印は、並べる中身にならないので残す。
+ *   伸びるセクションの中心を含むセクションは残す。囲んでいるセクションで、ずらすと、囲む側が中身ごと下へ動く。
+ * - held は、このまとまりで set に書かれた、セクションの下の端。そこまでの伸びでは、下の段をずらさない。
+ *   WHY: 「元に戻す」は、縮んだセクションを元の高さへ戻す。縮むときに下を詰めていないので、戻すときに押し下げると、元の位置に戻らない。
+ * 中心が入る要素があると、その上の端からずらす量を決めるので、下のものは、間が gap より広く空く。
+ * WHY その要素だけを別の量でずらさない: 下にあるものの上に重なる。
  */
-function arrangedOrder(els: El[], container: El): El[] {
-  const items = membersOf(els, container).flatMap((m) => {
-    const b = isSolid(m) ? boxOf(m) : null;
-    return b ? [{ m, b }] : [];
-  });
-  items.sort((a, b) => a.b.y - b.b.y);
-  const rows: (typeof items)[] = [];
-  let bottom = -Infinity;
-  for (const it of items) {
+function growthPush(others: readonly Unit[], before: Box, after: Box, gap: number, cols?: { held: number }): { units: Unit[]; dy: number } | null {
+  const bottom = before.y + before.h;
+  const end = after.y + after.h;
+  const held = Math.max(bottom, cols?.held ?? bottom);
+  const beyond = cols === undefined || end > held;
+  const facing = (u: Unit): boolean => u.box.x < after.x + after.w && after.x < u.box.x + u.box.w;
+  const under = (h: number): Box => ({ x: after.x, y: bottom, w: after.w, h });
+  const swallowed = (u: Unit): boolean => {
+    if (cols === undefined || u.kind === "other") return false;
+    return u.kind === "solid" ? centerIn(u.box, under(end - bottom)) : centerIn(u.box, under(Number.POSITIVE_INFINITY)) && u.box.y < end && !centerIn(before, u.box);
+  };
+  const starts = others.filter((u) => (beyond && u.box.y >= held && facing(u)) || swallowed(u));
+  const threshold = Math.min(...starts.map((u) => u.box.y));
+  const dy = end + gap - threshold;
+  if (starts.length === 0 || dy <= 0) return null;
+  // 中心が入る要素を相手にすると、threshold は下の端より上になる。横の列にあって、下の端より上から始まるものは、同じ段に並んでいるので動かさない
+  const from = Math.max(threshold, held);
+  return { units: others.filter((u) => u.box.y >= from || swallowed(u)), dy };
+}
+
+interface Item {
+  el: El;
+  box: Box;
+}
+
+/**
+ * 列で並べるセクションの中身（items。ボードの要素の並びの順）を、並べる順にして返す。
+ * 並ぶ順は、ボードの要素の並び。このまとまりで場所を書いた要素（placed）だけ、書いた場所から、入れる位置を決める。
+ * WHY 場所を書いた要素だけ位置から読む: 全部の中身の位置を毎回読むと、高さが変わっただけで行の読みが変わり、順が入れ替わる。
+ * 入れる位置は、場所を書いていない中身（錨）の行から読む。行は、上の端が同じで、並びが続いている錨。行の帯は、上の端から、その行でいちばん背の高い錨の下の端まで。
+ * 行を上から見て、要素の中心が帯より上なら、その行の前。要素の上の端が帯の下の端までにあれば、その行の中で、中心が右にある最初の錨の前（無ければ行の末尾）。
+ * どの行にも当たらなければ末尾。
+ * WHY 行を先に決める: 錨 1 つずつの上下の範囲で見ると、錨より背の高い要素は、中心が錨の下の端より下に出て、その行の要素と読まれない。
+ * 同じ位置に入る要素どうしは、上の端、左の端の順に並べる。
+ */
+function orderOf(items: readonly Item[], placed: ReadonlySet<string>): El[] {
+  const rest = items.filter((it) => !placed.has(it.el.id));
+  const rows: { y: number; bottom: number; from: number; to: number }[] = [];
+  for (const [i, { box }] of rest.entries()) {
     const row = rows.at(-1);
-    if (row && it.b.y < bottom) row.push(it);
-    else rows.push([it]);
-    bottom = row && it.b.y < bottom ? Math.max(bottom, it.b.y + it.b.h) : it.b.y + it.b.h;
+    if (row && row.y === box.y) {
+      row.bottom = Math.max(row.bottom, box.y + box.h);
+      row.to = i + 1;
+    } else {
+      rows.push({ y: box.y, bottom: box.y + box.h, from: i, to: i + 1 });
+    }
   }
-  return rows.flatMap((row) => row.sort((a, b) => a.b.x - b.b.x).map((it) => it.m));
+  const slotOf = ({ box }: Item): number => {
+    const cx = box.x + box.w / 2;
+    for (const row of rows) {
+      if (box.y + box.h / 2 < row.y) return row.from;
+      if (box.y > row.bottom) continue;
+      const i = rest.slice(row.from, row.to).findIndex((anchor) => cx < anchor.box.x + anchor.box.w / 2);
+      return i < 0 ? row.to : row.from + i;
+    }
+    return rest.length;
+  };
+  const movers = items.filter((it) => placed.has(it.el.id)).map((it) => ({ it, slot: slotOf(it) }));
+  movers.sort((p, q) => p.it.box.y - q.it.box.y || p.it.box.x - q.it.box.x);
+  const out: El[] = [];
+  for (let i = 0; i <= rest.length; i++) {
+    out.push(...movers.filter((k) => k.slot === i).map((k) => k.it.el));
+    const anchor = rest[i];
+    if (anchor) out.push(anchor.el);
+  }
+  return out;
+}
+
+/**
+ * 列で並べるセクション c（枠は cb）に、中身（ordered。並べる順）を左上から列に詰めたときの、中身の形（cells）と、セクションの高さ（h）。
+ * 中身が無ければ、題名の帯だけの高さ。
+ */
+function gridOf(c: El, cb: Box, cols: number, ordered: readonly El[]): { cells: El[]; h: number } {
+  const colW = colWidth(cb, cols);
+  const cells: El[] = [];
+  let y = cb.y + sectionTop(c);
+  for (let i = 0; i < ordered.length; i += cols) {
+    let rowH = 0;
+    for (const [k, m] of ordered.slice(i, i + cols).entries()) {
+      // 画像は、縦横の比を保って列の幅に合わせる
+      const h = m.type === "image" && m.w !== undefined && m.h !== undefined ? { h: Math.round((m.h * colW) / m.w) } : {};
+      const next: El = { ...m, ...h, w: colW, x: cb.x + PAD + k * (colW + GAP), y };
+      rowH = Math.max(rowH, sizeOf(next).h);
+      cells.push(next);
+    }
+    y += rowH + GAP;
+  }
+  return { cells, h: ordered.length === 0 ? sectionTop(c) : y - GAP + PAD - cb.y };
+}
+
+interface Arranged {
+  /** 並べ直した後の、ボードの全要素 */
+  els: El[];
+  /** 形が変わった要素の id */
+  changed: string[];
+  /** 要素の並び（重なり順）が変わった */
+  reordered: boolean;
+}
+
+/**
+ * 列の指定（cols）があるセクションを、全部並べ直す。
+ * 中身（中心が枠の中にある、場所をふさぐ要素）を、左上から列に詰め、セクションの高さを中身に合わせる。中身が無ければ、題名の帯だけの高さに畳む。
+ * pending は、セクションの id ごとの、位置に関わらず、そのセクションの中身と読む要素の id（applyOps の pending）。ほかのセクションの中身には数えない。
+ * placed は、このまとまりで場所を書いた要素の id（orderOf）。
+ * claimed は、セクションの id ごとの、このまとまりで set に書かれた h。場所を書いた要素に限って、この高さの枠で、中身かどうかを読む。
+ * そこまでの伸びでは、下の段を押し下げない（growthPush の held）。
+ * WHY: 「元に戻す」は、中身と外の要素の元の座標と、セクションの元の h を、1 つのまとまりで送る。
+ * 今の枠で読むと、行が減って縮んだ枠では、元の座標へ戻した中身の中心が枠の下に出て、中身に戻らない。
+ * 行が増えて伸びた枠では、元の座標へ戻した外の要素の中心が枠に入って、中身になる。
+ * WHY 場所を書いた要素に限る: 書かれた h で枠そのものを変えると、下にあった外の要素まで中身になる。
+ */
+function arrangeCols(els: readonly El[], pending: ReadonlyMap<string, readonly string[]>, placed: ReadonlySet<string>, claimed: ReadonlyMap<string, number>): Arranged {
+  const work = [...els];
+  const index = new Map(work.map((e, i) => [e.id, i]));
+  const get = (id: string): El | undefined => work[index.get(id) ?? -1];
+  const changed = new Set<string>();
+  let reordered = false;
+  const put = (next: El): void => {
+    const i = index.get(next.id);
+    if (i === undefined || JSON.stringify(work[i]) === JSON.stringify(next)) return;
+    work[i] = next;
+    changed.add(next.id);
+  };
+  const sections = work.filter((e) => e.type === "container" && e.cols !== undefined);
+  for (const { id } of sections) {
+    // 先に並べたセクションが伸びて、押し下げられていることがあるので、今の形を読み直す
+    const c = get(id);
+    const cb = c ? boxOf(c) : null;
+    if (!c || !cb || c.cols === undefined) continue;
+    const own = new Set(pending.get(id) ?? []);
+    const elsewhere = new Set([...pending].flatMap(([section, ids]) => (section === id ? [] : ids)));
+    const reach: Box = { ...cb, h: claimed.get(id) ?? cb.h };
+    /** 中身。場所を書いた要素は frame で、ほかは今の枠で、中心が入っているかを読む */
+    const pick = (frame: Box): Item[] =>
+      work.flatMap((el): Item[] => {
+        const box = isSolid(el) ? boxOf(el) : null;
+        return box && !elsewhere.has(el.id) && (own.has(el.id) || centerIn(box, placed.has(el.id) ? frame : cb)) ? [{ el, box }] : [];
+      });
+    let items = pick(reach);
+    let grid = gridOf(c, cb, c.cols, orderOf(items, placed));
+    // 書かれた h の枠で外と読んだ要素が、並べた後の枠の中に残るなら、書かれた h を使わずに読み直す。
+    // WHY: 外と読んだまま枠の中に残すと、次の操作で、場所を書いていない要素として中身になる
+    const chosen = new Set(items.map((it) => it.el.id));
+    if (pick(cb).some((it) => !chosen.has(it.el.id) && centerIn(it.box, { ...cb, h: grid.h }))) {
+      items = pick(cb);
+      grid = gridOf(c, cb, c.cols, orderOf(items, placed));
+    }
+    // 並ぶ順を、ボードの要素の並びに書き戻す。中身が占めていた位置の中で入れ替える。
+    // WHY: 要素の並びは重なり順でもある。中身の集まりが同じなら、中身でない要素との前後は変わらない。
+    // 中身が加わるか抜けると、前からいた中身が、中身でない要素をまたいで動くことがある
+    if (grid.cells.some((m, i) => m.id !== items[i]?.el.id)) {
+      const slots = items.flatMap((it) => index.get(it.el.id) ?? []);
+      // 書き戻す前の要素を先に全部取る。書き戻しの途中は、位置の表（index）が古い
+      const moving = grid.cells.flatMap((m) => get(m.id) ?? []);
+      for (const [i, el] of moving.entries()) {
+        const slot = slots[i];
+        if (slot === undefined) continue;
+        work[slot] = el;
+        index.set(el.id, slot);
+      }
+      reordered = true;
+    }
+    const mine = new Set([id, ...grid.cells.map((m) => m.id)]);
+    // WHY 並べる前にまとまりを取る: まとまりは、中心がセクションの中にあるかで中身を見分ける。
+    // 並べている途中（中身は動いたが、セクションの高さは古い）や、伸ばした後（下にあった要素が枠に入る）に取ると、見分けを間違える
+    const others = unitsOf(work).flatMap((u) => (mine.has(u.head) ? [] : [{ ...u, ids: u.ids.filter((i) => !mine.has(i)) }]));
+    for (const next of grid.cells) {
+      const old = get(next.id);
+      // この要素を指しているコメントは、一緒に動かす
+      for (const note of work.filter((e) => e.type === "comment" && e.on === next.id)) put(shifted(note, (next.x ?? 0) - (old?.x ?? 0), (next.y ?? 0) - (old?.y ?? 0)));
+      put(next);
+    }
+    const h = grid.h;
+    put({ ...c, h });
+    // 縮んだときは、下のものを動かさない（間が OUTER_GAP より狭くなっていても、押し下げない）
+    const push = h > cb.h ? growthPush(others, cb, { ...cb, h }, OUTER_GAP, { held: reach.y + reach.h }) : null;
+    // 押し下げた要素を指しているコメントは、一緒に動かす
+    const pushed = new Set(push?.units.flatMap((u) => u.ids));
+    for (const el of [...work]) {
+      if (pushed.has(el.id) || (el.type === "comment" && el.on !== undefined && pushed.has(el.on))) put(shifted(el, 0, push?.dy ?? 0));
+    }
+  }
+  return { els: work, changed: [...changed], reordered };
 }
 
 /** セクションの中で、左上から順に、ほかの中身と重ならない最初の場所を返す */
@@ -857,10 +1046,7 @@ export function commentPayload(doc: Doc, id: string): Res<CommentPayload> {
   const inside = (e: El): boolean => {
     if (e.type === "comment" || e.type === "container") return false;
     const b = boxOf(e);
-    if (!area || !b) return false;
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2;
-    return cx >= area.x && cx <= area.x + area.w && cy >= area.y && cy <= area.y + area.h;
+    return area !== null && b !== null && centerIn(b, area);
   };
   const elements = doc.elements.filter((e) => (area ? inside(e) : e.id === c.on)).map(briefOf);
   return ok({
@@ -899,78 +1085,78 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
     if (addedIds.has(id)) addedIds.delete(id);
     else removed.set(id, el);
     updatedIds.delete(id);
+    detach(id);
+    pending.delete(id);
   };
 
-  /** threshold より下から始まるまとまりを、dy だけ下へずらす */
-  const pushDown = (units: Unit[], threshold: number, dy: number): void => {
-    for (const u of units) {
-      if (u.box.y < threshold) continue;
-      for (const id of u.ids) {
-        const el = byId.get(id);
-        if (!el) continue;
-        replace(shifted(el, 0, dy));
-        if (!addedIds.has(id)) updatedIds.add(id);
-      }
+  /** 変えた要素を、返事の updated に入れる。このまとまりで足した要素は、added で返るので入れない */
+  const touch = (id: string): void => {
+    if (!addedIds.has(id)) updatedIds.add(id);
+  };
+
+  /** まとまりを、dy だけ下へずらす */
+  const pushDown = (push: { units: Unit[]; dy: number } | null): void => {
+    for (const id of push?.units.flatMap((u) => u.ids) ?? []) {
+      const el = byId.get(id);
+      if (!el) continue;
+      replace(shifted(el, 0, push?.dy ?? 0));
+      touch(id);
     }
   };
-
-  /**
-   * セクションが下へ伸びて、下のものに届くなら、その段から下を全部ずらす。
-   * WHY 段ごと: 届いたものだけをずらすと、横に並んだセクションの上がそろわなくなる。
-   */
-  const growthPush = (id: string, before: Box, after: Box, others: Unit[] = unitsOf(doc.elements).filter((u) => u.head !== id)): { units: Unit[]; threshold: number; dy: number } | null => {
-    const below = others.filter((u) => u.box.y >= before.y + before.h && u.box.x < after.x + after.w && after.x < u.box.x + u.box.w);
-    const threshold = Math.min(...below.map((u) => u.box.y));
-    const dy = after.y + after.h + OUTER_GAP - threshold;
-    return below.length > 0 && dy > 0 ? { units: others, threshold, dy } : null;
-  };
+  /** セクション id のほかの、まとまり */
+  const unitsBut = (id: string): Unit[] => unitsOf(doc.elements).filter((u) => u.head !== id);
 
   /**
-   * 列の指定（cols）があるセクションの中身を、左上から列に詰めて並べ、セクションの高さを中身に合わせる。
-   * 中身が無ければ、題名の帯だけの高さに畳む。
-   * WHY 操作のたびに全部を並べ直す: 足す・消す・動かす・幅を変えるのどれでも、同じ規則で詰まった状態に戻すため。
-   * 並べ終わった状態にもう一度かけても、何も変わらない。
+   * 列で並べるセクションの id ごとの、次の並べ直し（settle）が、位置に関わらず、そのセクションの中身と読む要素の id。
+   * in で足して、まだ仮の場所にある要素、set でセクションごと動かした中身、set でその場で高さが増えた中身。
+   * WHY セクションごと動かした中身も: 動かした先に、まだ縮んでいない別のセクションの枠があると、位置で読めば、そちらの中身になる
+   * （「元に戻す」は、押し下げられたセクションを元の場所へ戻す set と、伸びたセクションを縮める操作を、1 つのまとまりで送る）。
+   * WHY 高さが増えた中身も: 中心が、伸びる前の枠の下に出ることがある。
+   * 足した後に消すか、座標を書いて動かした要素は、ここから外す。消したセクションのぶんは、丸ごと外す。
    */
-  const arrange = (id: string): void => {
-    const c = byId.get(id);
-    const cb = c ? boxOf(c) : null;
-    if (!c || !cb || c.cols === undefined) return;
-    const put = (old: El, next: El): void => {
-      if (JSON.stringify(old) === JSON.stringify(next)) return;
-      replace(next);
-      if (!addedIds.has(next.id)) updatedIds.add(next.id);
-    };
-    // WHY 並べる前にまとまりを取る: まとまりは、中心がセクションの中にあるかで中身を見分ける。
-    // 並べている途中（中身は動いたが、セクションの高さは古い）や、伸ばした後（下にあった要素が枠に入る）に取ると、見分けを間違える
-    const others = unitsOf(doc.elements).filter((u) => u.head !== c.id);
-    const ordered = arrangedOrder(doc.elements, c);
-    const colW = colWidth(cb, c.cols);
-    let y = cb.y + sectionTop(c);
-    for (let i = 0; i < ordered.length; i += c.cols) {
-      let rowH = 0;
-      for (const [k, m] of ordered.slice(i, i + c.cols).entries()) {
-        const x = cb.x + PAD + k * (colW + GAP);
-        // 画像は、縦横の比を保って列の幅に合わせる
-        const h = m.type === "image" && m.w !== undefined && m.h !== undefined ? { h: Math.round((m.h * colW) / m.w) } : {};
-        const next: El = { ...m, ...h, w: colW, x, y };
-        rowH = Math.max(rowH, sizeOf(next).h);
-        // この要素を指しているコメントは、一緒に動かす
-        for (const note of doc.elements.filter((e) => e.type === "comment" && e.on === m.id)) put(note, shifted(note, x - (m.x ?? 0), y - (m.y ?? 0)));
-        put(m, next);
-      }
-      y += rowH + GAP;
-    }
-    const h = ordered.length === 0 ? sectionTop(c) : y - GAP + PAD - cb.y;
-    if (h === cb.h) return;
-    put(c, { ...c, h });
-    if (h > cb.h) {
-      const push = growthPush(c.id, cb, { ...cb, h }, others);
-      if (push) pushDown(push.units, push.threshold, push.dy);
-    }
+  const pending = new Map<string, string[]>();
+  const detach = (id: string): void => {
+    for (const [section, ids] of pending) pending.set(section, ids.filter((x) => x !== id));
   };
-  const arrangeAll = (): void => {
-    const sections = doc.elements.filter((e) => e.type === "container" && e.cols !== undefined).sort((a, b) => (a.y ?? 0) - (b.y ?? 0));
-    for (const c of sections) arrange(c.id);
+  const isPending = (id: string): boolean => [...pending.values()].some((ids) => ids.includes(id));
+  const keep = (section: string, ids: readonly string[]): void => {
+    pending.set(section, [...new Set([...(pending.get(section) ?? []), ...ids])]);
+  };
+  /** 前の並べ直しの後に、場所を書いた要素（座標を書いた add、x・y を変えた set）。並べ直しが、書いた場所から並ぶ順を決める */
+  const placed = new Set<string>();
+  /** このまとまりで、set が x・y を変えた要素。後からセクションを動かしても、連れていかない */
+  const movedBySet = new Set<string>();
+  /** 列で並べるセクションの id ごとの、前の並べ直しの後に set で書かれた h。セクションには書かず、並べ直しに渡す（arrangeCols の claimed） */
+  const claimed = new Map<string, number>();
+
+  /** 列で並べるセクションを並べ直す。位置を読む操作の前と、まとまりの最後に呼ぶ */
+  const settle = (): void => {
+    const r = arrangeCols(doc.elements, pending, placed, claimed);
+    doc.elements = r.els;
+    for (const el of r.els) byId.set(el.id, el);
+    for (const id of r.changed) touch(id);
+    reordered ||= r.reordered;
+    pending.clear();
+    placed.clear();
+    claimed.clear();
+  };
+  /**
+   * 今の位置を読んで場所を決める操作か。その前に、列で並べるセクションを並べ直す。
+   * WHY 操作 1 つごとに並べ直さない: セクションだけ動かした、空の枠を足してまだ中身を置いていない、という途中の状態を並べ直すと、後ろの操作と食い違う。
+   * 並べ直しを後回しにするのは、場所を今の位置から決めない操作（cols のセクションへの in、座標を書いた add、set、rm、order、title、say）が続く間だけ。
+   * set は、伸びた付箋の下の中身と、動かすセクションの枠の中を、並べ直す前の位置で読む。in で足して仮の場所にある要素は、伸びの処理から除いてある。
+   */
+  const readsLayout = (op: Record<string, unknown>): boolean => {
+    // 型は、場所を書かなければ、全体の右に置く
+    if (op.op === "compact" || op.op === "template") return true;
+    // cols を外すと、in で足した要素を並べる機会が無くなる
+    if (op.op === "set") return isRecord(op.patch) && op.patch.cols === null;
+    if (op.op !== "add" || !isRecord(op.el)) return false;
+    // コメントは、指す要素の、並べ終わった場所に書かれる
+    if (op.el.type === "comment") return true;
+    if (!isOneOf(NEEDS_PLACE, op.el.type) || (op.el.x !== undefined && op.el.y !== undefined)) return false;
+    // 場所を書かない add（above、cols の無いセクションへの in、全体の右）。cols のセクションへの in だけは、場所を並べ直しが決めるので、位置を読まない
+    return (typeof op.in === "string" ? byId.get(op.in) : undefined)?.cols === undefined;
   };
 
   // 型（template）は、要素を足す操作の並びに展開して、その場に差し込む。labels は、エラーに出す操作の番号（渡された並びでの番号）
@@ -980,6 +1166,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
     const op = queue[i];
     const at = labels[i] ?? `ops[${i}]`;
     if (!isRecord(op)) return fail(`${at}: 操作はオブジェクトで書く`);
+    if (readsLayout(op)) settle();
     switch (op.op) {
       case "add": {
         if (!isRecord(op.el)) return fail(`${at}: add には el（要素）が要る`);
@@ -993,14 +1180,18 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         }
         const type = isOneOf(TYPES, raw.type) ? raw.type : null;
         if (type === "shape" && raw.shape === undefined) raw.shape = "note";
-        const def = type ? DEFAULT_SIZE[type] : undefined;
+        // 既定の大きさが無い種類もあるので、全部の種類で引ける型で読む
+        const sizes: Partial<Record<ElType, { w: number; h: number }>> = DEFAULT_SIZE;
+        const def = type ? sizes[type] : undefined;
         if (def) {
           raw.w ??= def.w;
           raw.h ??= def.h;
         }
         let grown: El | null = null;
         // 置いた後に下へずらすもの。新しい要素を入れる前のまとまりで決める（新しい要素が、重なった先の中身に数えられないように）
-        let push: { units: Unit[]; threshold: number; dy: number } | null = null;
+        let push: { units: Unit[]; dy: number } | null = null;
+        // 列で並べるセクションに in で足すときの、そのセクションの id
+        let intoCols: string | null = null;
         place: if (type && NEEDS_PLACE.includes(type)) {
           const hasPos = raw.x !== undefined && raw.y !== undefined;
           const hints = [hasPos, op.in !== undefined, op.above !== undefined].filter(Boolean).length;
@@ -1008,10 +1199,6 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
           if (!hasPos) {
             raw.x = 0;
             raw.y = 0;
-            // 列で並べるセクションに足すものは、先に列の幅にする（幅で高さが変わる文字と表の、場所の見積もりを合わせる）
-            const into = typeof op.in === "string" ? byId.get(op.in) : undefined;
-            const intoBox = into?.cols === undefined ? null : boxOf(into);
-            if (into?.cols !== undefined && intoBox && type !== "image" && type !== "container") raw.w = colWidth(intoBox, into.cols);
             const probe = parseEl(raw);
             if (!probe.ok) return fail(`${at}: ${probe.error}`);
             const size = sizeOf(probe.value);
@@ -1020,11 +1207,12 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
               if (!c || c.type !== "container") return fail(`${at}: in のセクションが無い: ${JSON.stringify(op.in)}`);
               const cb = boxOf(c) ?? { x: 0, y: 0, w: 0, h: 0 };
               if (c.cols !== undefined) {
-                // 列で並べるセクションでは、右下の隅に、中心がセクションに入るように仮に置く。
-                // 並べる順は位置から読むので、いちばん後ろになり、操作の後の並べ直し（arrange）が列の末尾へ入れる。
+                if (type === "container") return fail(`${at}: cols のあるセクション（${c.id}）に、in でセクションは足せない。cols はセクションを並べない`);
+                // 場所は、次の並べ直し（settle）が決める。ここでは、中身を置き始める場所に仮に置き、このセクションに足したと控える。
                 // WHY セクションを仮に伸ばさない: 伸ばした枠に、下にあった別の要素が入って、中身に数えられる
-                raw.x = cb.x + cb.w - size.w / 2 - 1;
-                raw.y = cb.y + cb.h - size.h / 2 - 1;
+                raw.x = cb.x + PAD;
+                raw.y = cb.y + sectionTop(c);
+                intoCols = c.id;
                 break place;
               }
               const [x, y] = placeInside(doc.elements, c, size);
@@ -1033,14 +1221,14 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
               const w = Math.max(cb.w, x + size.w + PAD - cb.x);
               const h = Math.max(cb.h, y + size.h + PAD - cb.y);
               if (w !== cb.w || h !== cb.h) grown = { ...c, w, h };
-              if (grown) push = growthPush(c.id, cb, { ...cb, w, h });
+              if (grown) push = growthPush(unitsBut(c.id), cb, { ...cb, w, h }, OUTER_GAP);
             } else if (op.above !== undefined) {
               const units = unitsOf(doc.elements);
               const target = units.find((u) => typeof op.above === "string" && u.ids.includes(op.above));
               if (!target) return fail(`${at}: above の要素が無い: ${JSON.stringify(op.above)}`);
               raw.x = target.box.x;
               raw.y = target.box.y;
-              push = { units, threshold: target.box.y, dy: size.h + OUTER_GAP };
+              push = { units: units.filter((u) => u.box.y >= target.box.y), dy: size.h + OUTER_GAP };
             } else {
               const b = boundsOf(doc.elements);
               raw.x = b ? b.x + b.w + OUTER_GAP : 0;
@@ -1052,12 +1240,14 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         }
         const r = parseEl(raw);
         if (!r.ok) return fail(`${at}: ${r.error}`);
-        if (push) pushDown(push.units, push.threshold, push.dy);
+        pushDown(push);
         replace(r.value);
         addedIds.add(r.value.id);
+        if (intoCols !== null) keep(intoCols, [r.value.id]);
+        if (op.el.x !== undefined && op.el.y !== undefined) placed.add(r.value.id);
         if (grown) {
           replace(grown);
-          if (!addedIds.has(grown.id)) updatedIds.add(grown.id);
+          touch(grown.id);
         }
         break;
       }
@@ -1073,55 +1263,79 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         }
         const r = parseEl(merged);
         if (!r.ok) return fail(`${at}: ${r.error}`);
+        // 列で並べるセクションの高さは、中身から決まる。set で書かれた h は、セクションには書かない（cols を初めて書く set でも同じ）。
+        // WHY: 書かれた h で枠を広げると、並べ直しが、下にあった外の要素を中身と読む。
+        // 書かれた h は控えて、並べ直しに渡す（arrangeCols の claimed）
+        if (r.value.cols !== undefined) {
+          if (isNum(op.patch.h)) claimed.set(el.id, op.patch.h);
+          r.value.h = el.h;
+        }
         const before = el.type === "container" ? boxOf(el) : null;
         const after = boxOf(r.value);
         // セクションの下の端を set で下げたときも、in で伸びたときと同じに、下のものをずらす
-        if (before && after && before.x === after.x && before.y === after.y && after.h > before.h) {
-          const push = growthPush(el.id, before, after);
-          if (push) pushDown(push.units, push.threshold, push.dy);
-        }
+        if (before && after && before.x === after.x && before.y === after.y && after.h > before.h) pushDown(growthPush(unitsBut(el.id), before, after, OUTER_GAP));
         // セクションの中の要素が下へ伸びたら（h を増やした、文字や行が増えた）、同じセクションの、その下にある中身を押し下げる。
         // 入りきらなくなったら、セクションも伸ばす。WHY: 文字が小さいという検査の指摘を、箱を大きくするだけで直せるようにする
         const old = boxOf(el);
-        if (isSolid(el) && old && after && old.x === after.x && old.y === after.y && after.h > old.h) {
+        // in で足して仮の場所にある要素と、セクションごと動かした中身（pending）は飛ばす。WHY: 中心が、別のセクションの枠に入っていることがある。
+        // このまとまりで先に set が動かした要素も飛ばす。WHY: 「元に戻す」は、位置と大きさを別の set で送る。
+        // 位置だけ戻した途中の大きさでは、中心が、元は入っていなかったセクションの枠に入ることがある
+        if (isSolid(el) && !isPending(el.id) && !movedBySet.has(el.id) && old && after && old.x === after.x && old.y === after.y && after.h > old.h) {
           const section = doc.elements.find((c) => c.type === "container" && membersOf(doc.elements, c).some((m) => m.id === el.id));
           const sb = section ? boxOf(section) : null;
-          if (section && sb) {
-            const others = membersOf(doc.elements, section).flatMap((m) => {
-              const b = m.id === el.id ? null : boxOf(m);
-              return b ? [{ m, b }] : [];
+          // 列で並べるセクションの中身は、並べ直しが行の高さから置き直し、セクションも伸ばす。伸びた要素は、そのセクションの中身のままにする。
+          // WHY ここで伸ばさない: ここの押し下げは、下の端にかかっていた外の要素を残すので、その要素が、伸びた枠に入って中身になる
+          const home = doc.elements.find((c) => c.cols !== undefined && membersOf(doc.elements, c).some((m) => m.id === el.id));
+          if (home) keep(home.id, [el.id]);
+          if (section && sb && section.cols === undefined) {
+            // WHY 中身をずらす前にまとまりを取る: ずらした後だと、枠から出た中身が、セクションの外の要素と読まれて、もう一度押し下げられる
+            const outside = unitsBut(section.id);
+            // 同じセクションの、ほかの中身。in で足して仮の場所にある要素は、このセクションの中身ではないので除く
+            const mates = membersOf(doc.elements, section).flatMap((m): Unit[] => {
+              const box = m.id === el.id || isPending(m.id) ? null : boxOf(m);
+              return box ? [{ head: m.id, box, ids: [m.id], kind: "solid" }] : [];
             });
-            const below = others.filter(({ b }) => b.y >= old.y + old.h && b.x < after.x + after.w && after.x < b.x + b.w);
-            const threshold = Math.min(...below.map(({ b }) => b.y));
-            const dy = below.length > 0 ? after.y + after.h + GAP - threshold : 0;
-            let bottom = after.y + after.h;
-            for (const { m, b } of others) {
-              // 真下のものだけでなく、その高さから下にある中身を全部ずらす。横に並んだ付箋の上をそろえたままにするため
-              const moved = dy > 0 && b.y >= threshold;
-              if (moved) {
-                replace(shifted(m, 0, dy));
-                if (!addedIds.has(m.id)) updatedIds.add(m.id);
-              }
-              bottom = Math.max(bottom, b.y + b.h + (moved ? dy : 0));
-            }
+            // 真下のものだけでなく、その高さから下にある中身を全部ずらす。横に並んだ付箋の上をそろえたままにするため
+            const push = growthPush(mates, old, after, GAP);
+            pushDown(push);
+            const pushed = new Set(push?.units.map((u) => u.head));
+            const bottom = Math.max(after.y + after.h, ...mates.map((u) => u.box.y + u.box.h + (pushed.has(u.head) ? (push?.dy ?? 0) : 0)));
             const need = bottom + PAD - sb.y;
             if (need > sb.h) {
-              const push = growthPush(section.id, sb, { ...sb, h: need });
-              if (push) pushDown(push.units, push.threshold, push.dy);
+              pushDown(growthPush(outside, sb, { ...sb, h: need }, OUTER_GAP));
               replace({ ...section, h: need });
-              if (!addedIds.has(section.id)) updatedIds.add(section.id);
+              touch(section.id);
             }
           }
         }
+        const moved = old && after && (old.x !== after.x || old.y !== after.y) ? { dx: after.x - old.x, dy: after.y - old.y } : null;
+        // 列で並べるセクションを動かしたら、動かす前に枠の中にあった要素（中のセクションは、その中身も）を、同じ量だけ一緒に動かす。
+        // WHY: 中身を置き去りにすると、並べ直しが、空のセクションと読んで畳む。
+        // WHY このまとまりで先に set が動かした要素は連れていかない: 画面は、選んだ順に、セクションと中身を絶対座標の set で送る。中身の set が先に来ると、2 回動く
+        const within = moved && el.type === "container" && el.cols !== undefined ? insideOf(doc.elements, el) : [];
+        const riders = new Set([...within, ...within.filter((n) => n.type === "container").flatMap((n) => membersOf(doc.elements, n))].map((e) => e.id).filter((id) => !movedBySet.has(id)));
+        // 一緒に動かす中身は、動かした先でも、このセクションの中身と読む
+        keep(el.id, within.filter((m) => isSolid(m) && riders.has(m.id)).map((m) => m.id));
         replace(r.value);
-        if (!addedIds.has(el.id)) updatedIds.add(el.id);
-        // この要素を指しているコメントは、要素が動いたぶんだけ一緒に動かす
-        const was = boxOf(el);
-        if (was && after && el.type !== "comment" && (was.x !== after.x || was.y !== after.y)) {
-          for (const c of doc.elements.filter((e) => e.type === "comment" && e.on === el.id)) {
-            replace(shifted(c, after.x - was.x, after.y - was.y));
-            if (!addedIds.has(c.id)) updatedIds.add(c.id);
+        touch(el.id);
+        if (moved) {
+          const carry = (e: El): void => {
+            replace(shifted(e, moved.dx, moved.dy));
+            touch(e.id);
+          };
+          for (const id of riders) {
+            const m = byId.get(id);
+            if (m) carry(m);
           }
+          // この要素と、一緒に動かした中身を指しているコメントは、同じぶんだけ動かす。
+          // このまとまりで先に set が動かしたコメントは動かさない（「元に戻す」は、コメントの元の座標も set で送る。2 回動く）
+          // コメントを指すコメントは、動かさない
+          const led = el.type === "comment" ? new Set<string>() : new Set([el.id, ...riders]);
+          for (const c of doc.elements.filter((e) => e.type === "comment" && e.on !== undefined && led.has(e.on) && !riders.has(e.id) && !movedBySet.has(e.id))) carry(c);
+          // 場所を書いた要素は、in で足した控えから外し、書いた場所から、中身かどうかと並ぶ順を読む
+          detach(el.id);
+          placed.add(el.id);
+          movedBySet.add(el.id);
         }
         break;
       }
@@ -1131,7 +1345,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         if (typeof op.text !== "string" || op.text.trim() === "") return fail(`${at}: say には text（本文）が要る`);
         // WHY 専用の操作: set で thread を丸ごと書き直すと、同時に書かれた相手のやりとりを消す
         replace({ ...el, thread: [...(el.thread ?? []), { by: ctx.by, at: ctx.at, text: op.text.trim() }] });
-        if (!addedIds.has(el.id)) updatedIds.add(el.id);
+        touch(el.id);
         break;
       }
       case "rm": {
@@ -1152,7 +1366,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
             const need = Math.max(...bottoms) + PAD - cb.y;
             if (need >= cb.h) continue;
             replace({ ...c, h: need });
-            if (!addedIds.has(c.id)) updatedIds.add(c.id);
+            touch(c.id);
           }
         }
         // 上から順に見て、段と段の間が OUTER_GAP より空いていたら、その下を全部上へ詰める。
@@ -1169,7 +1383,7 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
             const el = byId.get(id);
             if (!el) continue;
             replace(shifted(el, 0, -shift));
-            if (!addedIds.has(id)) updatedIds.add(id);
+            touch(id);
           }
         }
         break;
@@ -1185,10 +1399,16 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
         break;
       }
       case "template": {
-        // 場所を書かなければ、全体の右に置く。id を書かなければ、tp1、tp2…と振る
+        // 場所を書かなければ、全体の右に置く。id を書かなければ、tp に連番を付けて振る
         const b = boundsOf(doc.elements);
-        do doc.seq += 1;
-        while (byId.has(`tp${doc.seq}`));
+        // WHY 番号を使い回さない: 消した型と同じ id を振ると、人が消した記録（pending）が、別の中身を「直した」記録に化ける。
+        // 要素の連番（doc.seq）を進めて使う。
+        // WHY 尾の付いた id も見る: 型は「tp3-l」のように尾を付けた id の要素だけを足し、「tp3」という id の要素は作らない
+        const used = (n: number): boolean => doc.elements.some((e) => e.id === `tp${n}` || e.id.startsWith(`tp${n}-`));
+        if (op.id === undefined) {
+          do doc.seq += 1;
+          while (used(doc.seq));
+        }
         const expanded = expandTemplate(op, b ? [b.x + b.w + OUTER_GAP, b.y] : [0, 0], `tp${doc.seq}`);
         if (!expanded.ok) return fail(`${at}: ${expanded.error}`);
         queue.splice(i + 1, 0, ...expanded.value);
@@ -1204,9 +1424,9 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
       default:
         return fail(`${at}: op は add | set | rm | title | say | order | compact | template のどれか`);
     }
-    // WHY 操作 1 つごと: 同じまとまりの後ろの操作（above、コメントを置く場所）が、並べ終わった位置を見られるようにする
-    arrangeAll();
   }
+
+  settle();
 
   // 消えた要素に付いていた矢印は、指す先が無いので一緒に消す
   for (const el of [...doc.elements]) {

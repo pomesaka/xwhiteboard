@@ -12,6 +12,13 @@ function check(ops: unknown[]): string[] {
   return checkBoard(r.value.doc).map((i) => `${i.kind}:${i.ids.join(",")}`);
 }
 
+/** 種類と id に、どれくらいか（px）も付けて返す */
+function checkPx(ops: unknown[]): string[] {
+  const r = applyOps(emptyDoc("t"), ops);
+  if (!r.ok) throw new Error(r.error);
+  return checkBoard(r.value.doc).map((i) => `${i.kind}:${i.ids.join(",")}:${i.px}`);
+}
+
 describe("問題の無い置き方では、何も返さない", () => {
   test.each([
     ["間を空けて並べた箱", [box("a", 0, 0), box("b", 260, 0)]],
@@ -122,12 +129,14 @@ test("どれくらいかを数で返す（重なりの幅と高さ、はみ出�
 });
 
 describe("列で並べるセクションの、列の幅", () => {
+  // 列の幅は (w − 48 − 16 × (cols − 1)) ÷ cols。120 より狭いと知らせる
   test.each([
-    ["列が狭い", { w: 504, cols: 4 }, ["narrow-column:s"]],
-    ["列が足りている", { w: 504, cols: 3 }, []],
+    ["3 列で幅 439 は、1 列が 119", { w: 439, cols: 3 }, ["narrow-column:s:119"]],
+    ["3 列で幅 440 は、1 列が 120 で足りる", { w: 440, cols: 3 }, []],
+    ["既定の幅（504）に 4 列は、1 列が 102", { w: 504, cols: 4 }, ["narrow-column:s:102"]],
     ["cols が無いセクションは見ない", { w: 100 }, []],
   ])("%s", (_name, extra, expected) => {
-    expect(check([add({ id: "s", type: "container", x: 0, y: 0, h: 160, ...extra })])).toEqual(expected);
+    expect(checkPx([add({ id: "s", type: "container", x: 0, y: 0, h: 160, ...extra })])).toEqual(expected);
   });
 });
 
@@ -142,6 +151,7 @@ describe("ほかのボードへのリンクの行き先", () => {
     ["付箋の文字のリンクの行き先が無い", { id: "a", type: "shape", text: "[x](無い.board.json)" }, ["dead-link:a"]],
     ["行き先がある", { id: "a", type: "shape", text: "[x](ある.board.json)" }, []],
     ["表のセルのリンク", { id: "t", type: "table", rows: [["[x](無い.board.json)"]] }, ["dead-link:t"]],
+    ["表の見出しのリンク", { id: "t", type: "table", head: ["[x](無い.board.json)"], rows: [["a"]] }, ["dead-link:t"]],
     ["画像の href", { id: "i", type: "image", svg: "<svg/>", href: "無い.board.json" }, ["dead-link:i"]],
     ["Web のリンクは見ない", { id: "a", type: "shape", text: "[x](https://example.com/無い.board.json)" }, []],
   ])("%s", (_name, el, expected) => {
@@ -159,14 +169,62 @@ describe("付箋の欄", () => {
     ["欄に書いた付箋は、何も返さない", note({ title: "見積もりを出す", text: "来週の定例まで", who: "竹内", carriedFrom: "2026-11-11" }), []],
     ["1 行めの太字は、見出しに書く", note({ text: "**見積もりを出す**\n来週の定例まで" }), ["handwritten-field:a"]],
     ["太字だけの 1 行は、見出しにしなくてよい", note({ text: "**見積もりを出す**" }), []],
-    ["本文の持ち越しの日付", note({ text: "見積もり · 11/11 から" }), ["handwritten-field:a"]],
-    ["札の状態", note({ tag: "決定 · 竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
-    ["status があれば、札は見ない", note({ tag: "決定事項", status: "decided", text: "見積もり" }), []],
-    ["見出しが 1 行に入らない", note({ title: "見積もりを来週の定例までに出して確認を取る", text: "補足" }), ["long-title:a"]],
-    ["札と見出しのぶん、本文が入らなくなる", note({ h: 70, status: "open", title: "見積もり", text: "補足の文が三行くらいになる長さで書いてあって、この高さには入らない。もう少し続く。まだ続く" }), ["text-overflow:a"]],
-    ["同じ本文でも、札と見出しが無ければ入る", note({ h: 70, text: "補足の文が三行" }), []],
+    ["持ち越しの日付: 本文の、区切りの後ろ", note({ text: "見積もり · 11/11 から" }), ["handwritten-field:a"]],
+    ["持ち越しの日付: 本文の、「・」の後ろ", note({ text: "見積もり・11/11 から" }), ["handwritten-field:a"]],
+    ["持ち越しの日付: 札の、区切りの後ろ", note({ tag: "宿題 · 11/11 から", text: "見積もり" }), ["handwritten-field:a"]],
+    ["持ち越しの日付: 札の全体", note({ tag: "11/11 から", text: "見積もり" }), ["handwritten-field:a"]],
+    ["持ち越しの日付: 本文の、日付だけの行", note({ text: "見積もり\n11/11 から" }), ["handwritten-field:a"]],
+    ["持ち越しの日付: 本文の、括弧の中", note({ text: "見積もり（11/11 から）" }), ["handwritten-field:a"]],
+    ["持ち越しの日付: 本文の、「→」の後ろ", note({ text: "見積もり→11/11 から" }), ["handwritten-field:a"]],
+    ["区切りの無い「M/D から」は、ふつうの文", note({ text: "4/1 から新体制で始める" }), []],
+    ["分数の後ろの「から」は、ふつうの文", note({ text: "2/3 から 3/4 に上げる" }), []],
+    ["carriedFrom があれば、日付は見ない", note({ text: "見積もり · 11/11 から", carriedFrom: "2026-11-11" }), []],
+    ["札の状態: 状態の名前だけ", note({ tag: "決定", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに「·」", note({ tag: "決定 · 竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに空白", note({ tag: "未決 竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに「：」", note({ tag: "持ち越し：竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに「/」", note({ tag: "優先/竹内さん", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに全角の括弧", note({ tag: "決定（竹内）", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに半角の括弧", note({ tag: "決定(竹内)", text: "見積もり" }), ["handwritten-field:a"]],
+    ["札の状態: 後ろに「→」", note({ tag: "決定→竹内", text: "見積もり" }), ["handwritten-field:a"]],
+    ["状態の名前で始まる別の語（決定事項）は、状態ではない", note({ tag: "決定事項の確認", text: "見積もり" }), []],
+    ["状態の名前で始まる別の語（優先度）は、状態ではない", note({ tag: "優先度 高", text: "見積もり" }), []],
+    ["status があれば、札は見ない", note({ tag: "決定 · 竹内さん", status: "decided", text: "見積もり" }), []],
   ])("%s", (_name, ops, expected) => {
     expect(check(ops)).toEqual(expected);
+  });
+
+  // 幅 220 の付箋の、文字の入る幅は 196。太字の全角は 1 文字 15。大文字は、いちばん広い字の幅で見積もる（M と W は 16.2、ほかは 12.9）
+  test.each([
+    ["全角 13 文字は 1 行に入る", "あいうえおかきくけこさしす", []],
+    ["全角 14 文字は 2 行になる", "あいうえおかきくけこさしすせ", ["long-title:a:2"]],
+    ["半角の大文字が混ざると、13 文字より少なくても 2 行になる", "VALUE 案を外向けに掲げる", ["long-title:a:2"]],
+    ["M が 12 文字は 1 行に入る", "MMMMMMMMMMMM", []],
+    ["M が 13 文字は 2 行になる", "MMMMMMMMMMMMM", ["long-title:a:2"]],
+    ["M と W のほかの大文字は、15 文字が 1 行に入る", "ABCDEFGHIJKLNOP", []],
+    ["M と W のほかの大文字は、16 文字で 2 行になる", "ABCDEFGHIJKLNOPQ", ["long-title:a:2"]],
+    ["半角の小文字 20 文字は 1 行に入る", "abcdefghijklmnopqrst", []],
+    ["半角の小文字 21 文字は 2 行になる", "abcdefghijklmnopqrstu", ["long-title:a:2"]],
+  ])("見出しの長さ: %s", (_name, title, expected) => {
+    expect(checkPx(note({ title, text: "補足" }))).toEqual(expected);
+  });
+
+  // 同じ本文（1 行）で、札と見出しを足すと、入る高さの下限が上がる。札の段で 21、見出し 1 行で 23
+  test.each([
+    ["本文だけ。高さ 36 で入る", { h: 36, text: "補足の文" }, []],
+    ["本文だけ。高さ 35 では小さくなる", { h: 35, text: "補足の文" }, ["small-text:a:10"]],
+    ["status 付き。高さ 57 で入る", { h: 57, text: "補足の文", status: "open" }, []],
+    ["status 付き。高さ 56 では小さくなる", { h: 56, text: "補足の文", status: "open" }, ["small-text:a:10"]],
+    ["who 付き。高さ 57 で入る", { h: 57, text: "補足の文", who: "竹内" }, []],
+    ["who 付き。高さ 56 では小さくなる", { h: 56, text: "補足の文", who: "竹内" }, ["small-text:a:10"]],
+    ["title 付き。高さ 59 で入る", { h: 59, text: "補足の文", title: "見積もり" }, []],
+    ["title 付き。高さ 58 では小さくなる", { h: 58, text: "補足の文", title: "見積もり" }, ["small-text:a:10"]],
+    ["title と status 付き。高さ 80 で入る", { h: 80, text: "補足の文", title: "見積もり", status: "open" }, []],
+    ["title と status 付き。高さ 79 では小さくなる", { h: 79, text: "補足の文", title: "見積もり", status: "open" }, ["small-text:a:10"]],
+    ["title だけ。高さ 43 で入る", { h: 43, title: "見積もり" }, []],
+    ["title だけ。高さ 42 では収まらない", { h: 42, title: "見積もり" }, ["text-overflow:a:undefined"]],
+  ])("札と見出しで減る高さ: %s", (_name, extra, expected) => {
+    expect(checkPx(note(extra))).toEqual(expected);
   });
 
   test("持ち越しの日付を carriedFrom に書けば、同じ日付の繰り返しにならない", () => {
@@ -177,13 +235,24 @@ describe("付箋の欄", () => {
 
 describe("セクションの論点と結論", () => {
   const sec = (extra: Record<string, unknown>) => add({ id: "s", type: "container", x: 0, y: 0, w: 504, cols: 2, ...extra });
-  const note = { op: "add", in: "s", el: { id: "a", type: "shape", text: "付箋" } };
   test.each([
     ["論点があって結論が無い", [sec({ question: "来期の採用は何人か" })], ["open-question:s"]],
     ["結論がある", [sec({ question: "来期の採用は何人か", answer: "2 人。4 月入社" })], []],
     ["論点が無いセクションは見ない", [sec({})], []],
-    ["列で並べる中身は、論点と結論の下から始まる", [sec({ question: "来期の採用は何人か", answer: "2 人" }), note], []],
     ["自由に置くセクションで、中身が論点にかかる", [add({ id: "s", type: "container", x: 0, y: 0, w: 504, h: 300, question: "来期の採用は何人か", answer: "2 人" }), box("a", 24, 52)], ["cramped:a,s"]],
+  ])("%s", (_name, ops, expected) => {
+    expect(check(ops)).toEqual(expected);
+  });
+});
+
+describe("列で並べるセクションの中の、別のセクション", () => {
+  const outer = (extra: Record<string, unknown>) => [add({ id: "s", type: "container", x: 0, y: 0, w: 504, h: 186, ...extra }), { op: "add", in: "s", el: { id: "a", type: "shape", text: "付箋" } }];
+  // 付箋 a（左の列）にかからない、右の列の空いた場所に置く
+  const inner = (x: number) => add({ id: "in", type: "container", x, y: 70, w: 150, h: 70 });
+  test.each([
+    ["中心が、列で並べるセクションの枠の中にある", [...outer({ cols: 2 }), inner(280)], ["nested-section:in,s"]],
+    ["自由に置くセクションの中のセクションは、知らせない", [...outer({}), inner(280)], []],
+    ["列で並べるセクションの外にあるセクションは、知らせない", [...outer({ cols: 2 }), inner(600)], []],
   ])("%s", (_name, ops, expected) => {
     expect(check(ops)).toEqual(expected);
   });

@@ -1,10 +1,11 @@
-import { ALIGNS, COLORS, FONT, HEADS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, TABLE_COL, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
+import { ALIGNS, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, TABLE_COL, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
 
 import { LABEL_LIFT, arrowPath, labelSpot, routeArrow, type RouteEnd } from "../shared/route.ts";
 import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
 import { svgSrc } from "./sketch.ts";
 import { GANTT_GROUP_H, GANTT_GROUP_ROW_H, segmentsOf, GANTT_MARK_H, GANTT_PAD, GANTT_ROW_H, GANTT_SCALE_H, GANTT_UNITS, dragBar, formatDay, ganttLayout, parseDay, type GanttBar } from "../shared/gantt.ts";
 import type { EndMark, ShapeKind } from "../shared/model.ts";
+import { dropMissing, restoreOps, withGeometry } from "../shared/restore.ts";
 
 const SVG_NS ="http://www.w3.org/2000/svg";
 const params = new URLSearchParams(location.search);
@@ -89,6 +90,8 @@ const els = new Map<string, El>();
 const nodes = new Map<string, HTMLElement>();
 const selection = new Set<string>();
 const flashing = new Set<string>();
+/** 注目しているセクションと、その中身。注目していなければ空 */
+const lit = new Set<string>();
 const undoStack: unknown[][] = [];
 const view = { x: 0, y: 0, k: 1 };
 let title = "";
@@ -146,7 +149,8 @@ function rectOf(el: El): Box | null {
   return b;
 }
 
-function fit(): void {
+/** 全部の要素が入る範囲。要素が無ければ null */
+function boardBounds(): Box | null {
   let x1 = Infinity;
   let y1 = Infinity;
   let x2 = -Infinity;
@@ -160,20 +164,29 @@ function fit(): void {
     x2 = Math.max(x2, b.x + b.w);
     y2 = Math.max(y2, b.y + b.h);
   }
+  return x1 === Infinity ? null : { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+
+/** 渡した範囲が画面に収まる位置と倍率にする。範囲が無ければ、原点を真ん中に置く */
+function fitTo(b: Box | null): void {
   const W = stage.clientWidth;
   const H = stage.clientHeight;
-  if (x1 === Infinity) {
+  if (!b) {
     view.x = W / 2;
     view.y = H / 2;
     view.k = 1;
   } else {
     // 操作の部品に隠れないよう、ふだんの画面では余白を広く取る
     const m = exporting ? EXPORT_MARGIN : 90;
-    view.k = Math.max(0.05, Math.min((W - m * 2) / Math.max(1, x2 - x1), (H - m * 2) / Math.max(1, y2 - y1), exporting ? 4 : 1));
-    view.x = (W - (x2 - x1) * view.k) / 2 - x1 * view.k;
-    view.y = (H - (y2 - y1) * view.k) / 2 - y1 * view.k;
+    view.k = Math.max(0.05, Math.min((W - m * 2) / Math.max(1, b.w), (H - m * 2) / Math.max(1, b.h), exporting ? 4 : 1));
+    view.x = (W - b.w * view.k) / 2 - b.x * view.k;
+    view.y = (H - b.h * view.k) / 2 - b.y * view.k;
   }
   applyView();
+}
+
+function fit(): void {
+  fitTo(boardBounds());
 }
 
 function div(cls: string, text?: string): HTMLDivElement {
@@ -374,7 +387,10 @@ function renderEl(el: El): void {
   if (el.type === "text") cls.push(`sz-${el.size ?? "m"}`, ...(el.w === undefined ? [] : ["wrap"]), ...(el.align ? [`al-${el.align}`] : []));
   if (selection.has(el.id)) cls.push("sel");
   if (flashing.has(el.id)) cls.push("flash");
+  if (lit.has(el.id)) cls.push("lit");
   if (el.locked) cls.push("locked");
+  // 論点があるセクションでは、論点が見出しになり、題名は小さい分類の札になる
+  if (el.type === "container" && el.question) cls.push("asking");
   n.className = cls.join(" ");
   n.style.left = `${el.x ?? 0}px`;
   n.style.top = `${el.y ?? 0}px`;
@@ -428,7 +444,11 @@ function renderEl(el: El): void {
       if (el.question || el.answer) {
         const head = div("shead");
         if (el.question) head.append(div("sq", el.question));
-        if (el.answer) head.append(div("sa", el.answer));
+        if (el.answer) {
+          const answer = div("sa");
+          answer.append(div("salabel", "結論"), div("satext", el.answer));
+          head.append(answer);
+        }
         n.append(head);
       }
       break;
@@ -824,20 +844,47 @@ function positionHandle(): void {
 /** いま話している議題のセクションの id。サーバーが持つ一時の表示で、全部の画面で同じになる */
 let focusId: string | null = null;
 
-function setFocus(raw: unknown): void {
-  // 書き出しの画面では、注目を効かせない（議事録の画像が薄くならないように）
-  focusId = typeof raw === "string" && !exporting ? raw : null;
+/**
+ * 注目を、サーバーから届いた値に合わせる。注目が別のセクションへ移ったら、そのセクションへ画面を寄せる。
+ * 画面を寄せたかを返す。
+ * WHY やめたときは動かさない: 人が次に見たい場所は分からない。見ていた場所のままにする。
+ */
+function setFocus(raw: unknown): boolean {
+  // 書き出しの画面では、注目を効かせない（議事録の画像が薄くならず、全体が写るように）
+  const next = typeof raw === "string" && !exporting ? raw : null;
+  // WHY 操作の最中は寄せない: ドラッグやパンは、押した時点の位置と倍率を基準に動かしている。途中で変えると、手元の動きがずれる
+  if (next !== focusId) focusToFit = gesture ? null : next;
+  focusId = next;
+  return fitFocus();
+}
+
+/** 注目が移ってから、まだ画面を寄せていないセクションの id */
+let focusToFit: string | null = null;
+
+/**
+ * 注目が移ったセクションへ画面を寄せる。寄せたかを返す。
+ * WHY セクションが無ければ待つ: 注目の知らせは、要素の知らせと別に届く。セクションが届く前に注目が届くことがある
+ */
+function fitFocus(): boolean {
+  const section = focusToFit === null ? undefined : els.get(focusToFit);
+  if (!section) return false;
+  focusToFit = null;
+  const box = gesture ? null : rectOf(section);
+  if (box) fitTo(box);
+  return box !== null;
 }
 
 /** 注目しているセクションと中身に印（lit）を付け、ほかを薄くする */
 function applyFocus(): void {
   const section = focusId === null ? undefined : els.get(focusId);
-  const lit = new Set(section ? [section.id, ...membersOf(els.values(), section).map((m) => m.id)] : []);
+  lit.clear();
+  if (section) for (const id of [section.id, ...membersOf(els.values(), section).map((m) => m.id)]) lit.add(id);
   world.classList.toggle("focusing", section !== undefined);
   for (const [id, n] of nodes) n.classList.toggle("lit", lit.has(id));
 }
 
 function refresh(): void {
+  fitFocus();
   applyFocus();
   renderLines();
   positionHandle();
@@ -892,17 +939,12 @@ function parseEls(raw: unknown): El[] {
   return out;
 }
 
-/** ドラッグと大きさの変更の最中は、ほかからの更新が届いても、手元の位置と大きさを保つ */
-function keepGeometry(remote: El, local: El): El {
-  return { ...remote, x: local.x, y: local.y, w: local.w, h: local.h, points: local.points, from: local.from, to: local.to };
-}
-
 function upsert(el: El): void {
   const local = els.get(el.id);
   const held = (gesture?.kind === "move" && gesture.orig.has(el.id)) || (gesture?.kind === "resize" && gesture.orig.id === el.id);
   // ガントの帯を動かしている最中は、ほかからの更新が届いても、手元の行を保つ
   const dragging = gesture?.kind === "gantt" && gesture.id === el.id && local;
-  els.set(el.id, dragging ? { ...el, bars: local.bars } : held && local ? keepGeometry(el, local) : el);
+  els.set(el.id, dragging ? { ...el, bars: local.bars } : held && local ? withGeometry(el, local) : el);
   renderEl(els.get(el.id) ?? el);
 }
 
@@ -964,11 +1006,12 @@ function loadSnapshot(raw: unknown): void {
   applyOrder(next.map((e) => e.id));
   setTitle(typeof raw.title === "string" ? raw.title : "");
   renderClaims(raw.claims);
-  setFocus(raw.focus);
+  const moved = setFocus(raw.focus);
   refresh();
   if (!fitted) {
     fitted = true;
-    fit();
+    // 開いたときに注目があれば、全体ではなく、注目のセクションを見せる
+    if (!moved) fit();
   }
 }
 
@@ -1003,6 +1046,8 @@ interface OpsResult {
   added: El[];
   updated: El[];
   removed: El[];
+  /** サーバーが足した変更（並べ直し、押し下げ、幅をそろえる）を、元へ戻す操作（shared/restore.ts） */
+  restore: unknown[];
 }
 
 let inflight: Promise<unknown> = Promise.resolve();
@@ -1021,6 +1066,8 @@ async function commitNow(ops: unknown[], inverse: unknown[] | null): Promise<Ops
   if (ops.length === 0) return null;
   let j: unknown;
   let okStatus = false;
+  // WHY 送る直前の写しを使う: 同じ変更が SSE でも届き、返事より先に els へ入ることがある
+  const before = new Map(els);
   try {
     const r = await api("/api/ops", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ board: boardPath, client: clientId, ops }) });
     okStatus = r.ok;
@@ -1033,25 +1080,38 @@ async function commitNow(ops: unknown[], inverse: unknown[] | null): Promise<Ops
     await resync();
     return null;
   }
-  const result: OpsResult = { added: parseEls(j.added), updated: parseEls(j.updated), removed: parseEls(j.removed) };
+  const updated = parseEls(j.updated);
+  const result: OpsResult = { added: parseEls(j.added), updated, removed: parseEls(j.removed), restore: restoreOps(before, updated, inverse ?? []) };
   for (const el of result.removed) drop(el.id);
   for (const el of [...result.added, ...result.updated]) upsert(el);
   applyOrder(j.order);
-  if (inverse) pushUndo(inverse);
+  if (inverse) pushUndo([...inverse, ...result.restore]);
   refresh();
   return result;
 }
 
 function pushUndo(ops: unknown[]): void {
   undoStack.push(ops);
+  undoFailed = false;
   if (undoStack.length > 100) undoStack.shift();
   undoButton.disabled = false;
 }
 
+/** 直前の「元に戻す」が失敗して、その中身を残してあるか */
+let undoFailed = false;
+
 async function undo(): Promise<void> {
-  const ops = undoStack.pop();
+  const ops = undoStack.at(-1);
+  if (!ops) return;
+  // 積んだ後に、エージェントやほかの画面が消した要素への操作は除く
+  const live = dropMissing(ops, (id) => els.has(id));
+  // WHY 失敗しても 1 回は残す: 失敗の後は、サーバーの今の中身を読み直す（resync）。
+  // 読み直した後なら、消えた要素を除いて通ることがある。2 回続けて失敗した中身は、残すと次の「元に戻す」をふさぐので捨てる
+  const done = live.length === 0 || (await commit(live, null)) !== null;
+  if (done || undoFailed) undoStack.splice(undoStack.lastIndexOf(ops), 1);
+  if (!done && undoFailed) toast("元に戻せなかった操作を捨てた");
+  undoFailed = !done && !undoFailed;
   undoButton.disabled = undoStack.length === 0;
-  if (ops) await commit(ops, null);
 }
 
 interface Change {
@@ -1079,7 +1139,7 @@ async function addEl(el: Record<string, unknown>): Promise<El | null> {
   const r = await commit([{ op: "add", el }], null);
   const added = r?.added[0];
   if (!added) return null;
-  pushUndo([{ op: "rm", id: added.id }]);
+  pushUndo([{ op: "rm", id: added.id }, ...(r?.restore ?? [])]);
   return added;
 }
 
@@ -1091,7 +1151,7 @@ async function removeEls(all: string[]): Promise<void> {
     return;
   }
   const r = await commit(ids.map((id) => ({ op: "rm", id })), null);
-  if (r) pushUndo(r.removed.map((el) => ({ op: "add", el })));
+  if (r) pushUndo([...r.removed.map((el) => ({ op: "add", el })), ...r.restore]);
 }
 
 // ---- 選択と、選択した要素への操作 ----
@@ -1166,8 +1226,8 @@ function shared<T>(values: T[]): T | null {
   return first !== undefined && values.every((v) => v === first) ? first : null;
 }
 /** セクションの中身の並べ方。0 は、並べない（自由に置く） */
-const COLS_OPTIONS = ["0", "1", "2", "3", "4", "5", "6"] as const;
-const COLS_LABEL: Record<(typeof COLS_OPTIONS)[number], string> = { "0": "自由に置く", "1": "1 列", "2": "2 列", "3": "3 列", "4": "4 列", "5": "5 列", "6": "6 列" };
+const COLS_OPTIONS = Array.from({ length: MAX_COLS + 1 }, (_, i) => String(i));
+const COLS_LABEL: Record<string, string> = Object.fromEntries(COLS_OPTIONS.map((o) => [o, o === "0" ? "自由に置く" : `${o} 列`]));
 /** 付箋の状態の選択。none は、札を出さない */
 const STATUS_OPTIONS = ["none", ...NOTE_STATUS] as const;
 const STATUS_OPTION_LABEL: Record<(typeof STATUS_OPTIONS)[number], string> = { none: "状態なし", ...STATUS_LABEL };
@@ -1229,6 +1289,8 @@ function renderBar(): void {
       button("塗りなし", all((e) => e.hollow === true), () => patchAll(["shape"], { hollow: all((e) => e.hollow === true) ? null : true })),
       button("点線", all((e) => e.dashed === true), () => patchAll(["shape"], { dashed: all((e) => e.dashed === true) ? null : true })),
     );
+    // 見出しの無い付箋には、ダブルクリックで直す先が無いので、ここから足す
+    if (sel.length === 1 && first?.type === "shape") add(button("見出し", false, () => editNoteTitle(first), "見出しを書く（空にすると消える）"));
   }
   if (has("text") || has("shape")) {
     // 文字の大きさと寄せ。文字（text）と図形の両方に効く
@@ -1303,6 +1365,12 @@ function renderBar(): void {
 function editSectionField(el: El, key: "question" | "answer"): void {
   const v = prompt(key === "question" ? "セクションの論点" : "セクションの結論", el[key] ?? "");
   if (v !== null) void setOps([{ id: el.id, patch: { [key]: v === "" ? null : v } }]);
+}
+
+/** 付箋の見出しを、人が足すか直す。空にすると消す */
+function editNoteTitle(el: El): void {
+  const v = prompt("付箋の見出し", el.title ?? "");
+  if (v !== null) void setOps([{ id: el.id, patch: { title: v === "" ? null : v } }]);
 }
 
 /** 選んだ要素を、前面か背面へ動かす */

@@ -1,21 +1,29 @@
 // 型（2×2 の matrix、左右の立場を並べる versus、論点を分ける tree）を、ふつうの要素を足す操作の並びに展開する。
 // WHY 専用の要素にしない: 展開した後は、セクション・付箋・文字・矢印なので、人がいつもの操作で直せて、見た目の検査もそのまま効く。
 // エージェントは中身を渡すだけで、座標と大きさはここで決める。
-import { COLORS, GAP, PAD, TITLE_H, colWidth, isRecord, type Point, type Res } from "./model.ts";
+import { COLORS, DEFAULT_SIZE, GAP, PAD, TITLE_H, colWidth, isRecord, type Point, type Res } from "./model.ts";
 
 export const TEMPLATES = ["matrix", "versus", "tree"] as const;
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
 
-/** 付箋の高さ。見出しと札と補足 1〜2 行が入る */
-const NOTE_H = 110;
+/**
+ * 付箋の既定の大きさ。枠の中の付箋の高さと、木の箱の幅に使う。
+ * WHY 関数で読む: model.ts とは互いに import していて、このファイルが先に評価される。
+ * 定数に取ると、DEFAULT_SIZE がまだ初期化されていない時点で読むことになる。
+ */
+const noteSize = (): { w: number; h: number } => DEFAULT_SIZE.shape;
+/** 枠の幅。w（型の全体の幅）を書かなかったとき */
 const CELL_W = 400;
+/** 枠は、これより狭くしない。枠が 200 のとき、中の付箋の幅は 152（全角 8 文字で折り返す）。これより狭い付箋は、文字が入らない */
+const MIN_CELL_W = 200;
+/** versus の、左右の枠の間（「vs」を置く幅） */
+const VS_W = 80;
 /** 2×2 の、縦の軸の名前を置く幅 */
 const SIDE_W = 150;
 const HEAD_H = 34;
 const TITLE_ROW = 64;
-/** 木の箱の大きさと、段の間 */
-const NODE_W = 220;
+/** 木の箱の高さと、段の間。箱の幅は、付箋の既定の幅 */
 const NODE_H = 72;
 const NODE_GAP_X = 70;
 const MAX_TREE_NODES = 40;
@@ -58,20 +66,33 @@ function parseCell(raw: unknown, where: string): Res<Cell> {
 
 /** 付箋を 1 列に積んだ枠の高さ */
 function cellHeight(count: number): number {
-  return TITLE_H + Math.max(1, count) * (NOTE_H + GAP) - GAP + PAD;
+  return TITLE_H + Math.max(1, count) * (noteSize().h + GAP) - GAP + PAD;
 }
 
 /** 枠（セクション）と、その中の付箋。高さは、横に並ぶ枠とそろえるために外から渡す */
 function cellOps(id: string, cell: Cell, x: number, y: number, w: number, h: number): Ops {
   const noteW = colWidth({ x, y, w, h }, 1);
+  const noteH = noteSize().h;
   return [
     { op: "add", el: { id, type: "container", title: cell.title, x, y, w, h, ...(cell.color === undefined ? {} : { color: cell.color }) } },
-    ...cell.items.map((it, i) => ({ op: "add", el: { type: "shape", ...it, id: `${id}-${i + 1}`, x: x + PAD, y: y + TITLE_H + i * (NOTE_H + GAP), w: noteW, h: NOTE_H } })),
+    // WHY 白: 付箋の既定の黄色だと、枠の色と合わせて 1 つの図に色が増え、色が意味を持たなくなる。色は、書いたときだけ付ける
+    ...cell.items.map((it, i) => ({ op: "add", el: { type: "shape", color: "white", ...it, id: `${id}-${i + 1}`, x: x + PAD, y: y + TITLE_H + i * (noteH + GAP), w: noteW, h: noteH } })),
   ];
 }
 
 function heading(id: string, text: string, x: number, y: number, w: number, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { op: "add", el: { id, type: "text", text, x, y, w, align: "center", ...extra } };
+}
+
+/**
+ * 枠 1 つの幅。w（型の全体の幅）から、枠でない部分（fixed）を引いて 2 つに分ける。
+ */
+function cellWidth(w: unknown, fixed: number): Res<number> {
+  if (w === undefined) return { ok: true, value: CELL_W };
+  if (typeof w !== "number" || !Number.isFinite(w)) return fail("w は数値（型の全体の幅）");
+  const cell = Math.floor((w - fixed) / 2);
+  if (cell < MIN_CELL_W) return fail(`w が狭すぎて、枠の幅が ${cell} になる。w は ${fixed + MIN_CELL_W * 2} 以上にする（枠の幅が ${MIN_CELL_W} 以上になる）`);
+  return { ok: true, value: cell };
 }
 
 function axis(raw: unknown, where: string): Res<{ label: string; low: string; high: string }> {
@@ -100,17 +121,20 @@ function matrix(op: Record<string, unknown>, id: string, [x0, y0]: Point): Res<O
     }
     cells.push(out);
   }
+  const cw = cellWidth(op.w, SIDE_W + GAP);
+  if (!cw.ok) return cw;
+  const cellW = cw.value;
   const ops: Ops = [];
   let y = y0;
   if (typeof op.title === "string" && op.title !== "") {
-    ops.push(heading(`${id}-title`, op.title, x0, y, SIDE_W + CELL_W * 2 + GAP, { size: "l", align: "left" }));
+    ops.push(heading(`${id}-title`, op.title, x0, y, SIDE_W + cellW * 2 + GAP, { size: "l", align: "left" }));
     y += TITLE_ROW;
   }
   const left = x0 + SIDE_W;
   // 横の軸の名前と、両端の名前
-  ops.push(heading(`${id}-x`, `${xa.value.label} →`, left, y, CELL_W * 2 + GAP, { size: "s" }));
+  ops.push(heading(`${id}-x`, xa.value.label, left, y, cellW * 2 + GAP, { size: "s" }));
   y += HEAD_H - 8;
-  ops.push(heading(`${id}-xl`, `**${xa.value.low}**`, left, y, CELL_W), heading(`${id}-xh`, `**${xa.value.high}**`, left + CELL_W + GAP, y, CELL_W));
+  ops.push(heading(`${id}-xl`, `**${xa.value.low}**`, left, y, cellW), heading(`${id}-xh`, `**${xa.value.high}**`, left + cellW + GAP, y, cellW));
   y += HEAD_H;
   const names = [
     ["tl", "tr"],
@@ -121,8 +145,8 @@ function matrix(op: Record<string, unknown>, id: string, [x0, y0]: Point): Res<O
     // 縦の軸は、上の段が high
     const side = r === 0 ? ya.value.high : ya.value.low;
     ops.push({ op: "add", el: { id: `${id}-y${r === 0 ? "h" : "l"}`, type: "text", text: `**${side}**`, x: x0, y: y + h / 2 - 12, w: SIDE_W - GAP, align: "right" } });
-    if (r === 0) ops.push({ op: "add", el: { id: `${id}-y`, type: "text", text: `↑ ${ya.value.label}`, size: "s", x: x0, y: y - 4, w: SIDE_W - GAP, align: "right" } });
-    for (const [c, cell] of row.entries()) ops.push(...cellOps(`${id}-${names[r]?.[c] ?? `${r}${c}`}`, cell, left + c * (CELL_W + GAP), y, CELL_W, h));
+    if (r === 0) ops.push({ op: "add", el: { id: `${id}-y`, type: "text", text: ya.value.label, size: "s", x: x0, y: y - 4, w: SIDE_W - GAP, align: "right" } });
+    for (const [c, cell] of row.entries()) ops.push(...cellOps(`${id}-${names[r]?.[c] ?? `${r}${c}`}`, cell, left + c * (cellW + GAP), y, cellW, h));
     y += h + GAP;
   }
   return { ok: true, value: ops };
@@ -134,17 +158,19 @@ function versus(op: Record<string, unknown>, id: string, [x0, y0]: Point): Res<O
   if (!left.ok) return left;
   const right = parseCell(op.right, "right");
   if (!right.ok) return right;
-  const mid = 80;
+  const cw = cellWidth(op.w, VS_W);
+  if (!cw.ok) return cw;
+  const cellW = cw.value;
   const ops: Ops = [];
   let y = y0;
   if (typeof op.title === "string" && op.title !== "") {
-    ops.push(heading(`${id}-title`, op.title, x0, y, CELL_W * 2 + mid, { size: "l", align: "left" }));
+    ops.push(heading(`${id}-title`, op.title, x0, y, cellW * 2 + VS_W, { size: "l", align: "left" }));
     y += TITLE_ROW;
   }
   const h = Math.max(cellHeight(left.value.items.length), cellHeight(right.value.items.length));
-  ops.push(...cellOps(`${id}-l`, { color: "blue", ...left.value }, x0, y, CELL_W, h));
-  ops.push(heading(`${id}-vs`, "vs", x0 + CELL_W, y + h / 2 - 18, mid, { size: "l" }));
-  ops.push(...cellOps(`${id}-r`, { color: "orange", ...right.value }, x0 + CELL_W + mid, y, CELL_W, h));
+  ops.push(...cellOps(`${id}-l`, { color: "blue", ...left.value }, x0, y, cellW, h));
+  ops.push(heading(`${id}-vs`, "vs", x0 + cellW, y + h / 2 - 18, VS_W, { size: "l" }));
+  ops.push(...cellOps(`${id}-r`, { color: "orange", ...right.value }, x0 + cellW + VS_W, y, cellW, h));
   return { ok: true, value: ops };
 }
 
@@ -185,11 +211,12 @@ function tree(op: Record<string, unknown>, id: string, [x0, y0]: Point): Res<Ops
     y += TITLE_ROW;
   }
   const arrows: Ops = [];
+  const nodeW = noteSize().w;
   const slot = NODE_H + GAP;
   const place = (node: TreeNode, depth: number, top: number): void => {
     // 文字の多い節は、箱を高くせず、検査（small-text）に任せる。段の高さをそろえるため
     const ny = top + (node.leaves * slot - GAP) / 2 - NODE_H / 2;
-    ops.push({ op: "add", el: { type: "shape", shape: "round", color: depth === 0 ? "ink" : node.children.length > 0 ? "blue" : "white", ...node.fields, id: node.id, x: x0 + depth * (NODE_W + NODE_GAP_X), y: ny, w: NODE_W, h: NODE_H } });
+    ops.push({ op: "add", el: { type: "shape", shape: "round", color: depth === 0 ? "ink" : node.children.length > 0 ? "blue" : "white", ...node.fields, id: node.id, x: x0 + depth * (nodeW + NODE_GAP_X), y: ny, w: nodeW, h: NODE_H } });
     let at = top;
     for (const child of node.children) {
       place(child, depth + 1, at);
@@ -215,7 +242,9 @@ export function expandTemplate(op: Record<string, unknown>, origin: Point, prefi
   const hasY = typeof op.y === "number" && Number.isFinite(op.y);
   if ((op.x !== undefined || op.y !== undefined) && !(hasX && hasY)) return fail("x と y は、両方を数値で書くか、両方とも書かない");
   const at: Point = typeof op.x === "number" && typeof op.y === "number" ? [op.x, op.y] : origin;
-  const allowed: Record<(typeof TEMPLATES)[number], string[]> = { matrix: ["title", "xAxis", "yAxis", "cells"], versus: ["title", "left", "right"], tree: ["title", "root"] };
+  // WHY tree に w が無い: 木の幅は、段の数と箱の幅で決まる。箱を狭めると文字が入らず、段の間を詰めると線が読めない
+  if (kind === "tree" && op.w !== undefined) return fail("tree に w は書けない。木の幅は、段の数（深さ）と箱の幅で決まる。狭くするなら、木を浅くするか、分けて描く");
+  const allowed: Record<(typeof TEMPLATES)[number], string[]> = { matrix: ["title", "w", "xAxis", "yAxis", "cells"], versus: ["title", "w", "left", "right"], tree: ["title", "root"] };
   for (const k of Object.keys(op)) if (!["op", "kind", "id", "x", "y", ...allowed[kind]].includes(k)) return fail(`${kind} に ${k} は無い。書ける項目: id, x, y, ${allowed[kind].join(", ")}`);
   if (op.title !== undefined && typeof op.title !== "string") return fail("title は文字列");
   switch (kind) {

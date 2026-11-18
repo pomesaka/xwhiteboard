@@ -23,20 +23,32 @@ describe("行の中の装飾を読む", () => {
   });
 });
 
-describe("ボードへのリンクの行き先", () => {
+describe("リンクの行き先が、ほかのボードか", () => {
   test.each([
-    ["同じフォルダ", "anken.board.json", true, "/m/keiei/anken.board.json"],
-    ["下のフォルダ", "sub/a.board.json", true, "/m/keiei/sub/a.board.json"],
-    ["上のフォルダ", "../b.board.json", true, "/m/b.board.json"],
-    ["./ で始まる", "./anken.board.json", true, "/m/keiei/anken.board.json"],
-    ["ルートより上へは出ない", "../../../c.board.json", true, "/c.board.json"],
-    ["絶対パスは断る", "/m/a.board.json", false, null],
-    ["URL は断る", "https://example.com/a.board.json", false, null],
-    ["ボードでないファイルは断る", "a.json", false, null],
-    ["空白を含むパスは断る", "a b.board.json", false, null],
-  ])("%s", (_name, ref, valid, resolved) => {
-    expect(isBoardRef(ref)).toBe(valid);
-    if (resolved !== null) expect(resolveBoardRef("/m/keiei/keiei.board.json", ref)).toBe(resolved);
+    ["同じフォルダ", "anken.board.json", true],
+    ["下のフォルダ", "sub/a.board.json", true],
+    ["上のフォルダ", "../b.board.json", true],
+    ["./ で始まる", "./anken.board.json", true],
+    ["ルートより上を指す", "../../../c.board.json", true],
+    ["絶対パスは断る", "/m/a.board.json", false],
+    ["URL は断る", "https://example.com/a.board.json", false],
+    ["ボードでないファイルは断る", "a.json", false],
+    ["空白を含むパスは断る", "a b.board.json", false],
+    [") を含むパスは断る", "a).board.json", false],
+  ])("%s", (_name, ref, expected) => {
+    expect(isBoardRef(ref)).toBe(expected);
+  });
+});
+
+describe("ボードへのリンクの行き先を、絶対パスにする", () => {
+  test.each([
+    ["同じフォルダ", "anken.board.json", "/m/keiei/anken.board.json"],
+    ["下のフォルダ", "sub/a.board.json", "/m/keiei/sub/a.board.json"],
+    ["上のフォルダ", "../b.board.json", "/m/b.board.json"],
+    ["./ で始まる", "./anken.board.json", "/m/keiei/anken.board.json"],
+    ["ルートより上へは出ない", "../../../c.board.json", "/c.board.json"],
+  ])("%s", (_name, ref, expected) => {
+    expect(resolveBoardRef("/m/keiei/keiei.board.json", ref)).toBe(expected);
   });
 });
 
