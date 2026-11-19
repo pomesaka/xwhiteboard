@@ -157,9 +157,11 @@
 .st-todo { --st: var(--status-todo); }
 .st-carried { --st: var(--status-carried); }
 .st-priority { --st: var(--status-priority); }
+/* WHY 下限を名前の幅で抑える: 下限の 3.4em は、切ったときに 1 文字と「…」を残すための幅。
+   名前がそれより短いと、下限まで広がって右に空白が出る。--who-w は main.ts が文字数から見積もった名前の幅 */
 .shape .who {
   flex: 0 1 auto;
-  min-width: 3.4em;
+  min-width: min(3.4em, calc(var(--who-w, 3.4em) + 12px));
   background: var(--board-surface);
   color: var(--board-text-muted);
   box-shadow: inset 0 0 0 1px var(--board-line);

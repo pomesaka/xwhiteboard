@@ -436,7 +436,12 @@ function renderEl(el: El): void {
         const meta = div("meta");
         // WHY 書き出しの画面では期限切れの色を付けない: 書き出しは、同じボードなら同じバイト列になる。日付で変わると、前後の比較に使えない
         const overdue = !exporting && isOverdue(el, localDay(new Date()));
-        for (const p of parts) meta.append(div(p.kind === "status" ? `st st-${p.status}` : p.kind === "due" && overdue ? "due overdue" : p.kind, p.text));
+        for (const p of parts) {
+          const part = div(p.kind === "status" ? `st st-${p.status}` : p.kind === "due" && overdue ? "due overdue" : p.kind, p.text);
+          // 発言者の札の下限の幅に使う（board.css の .shape .who）
+          if (p.kind === "who") part.style.setProperty("--who-w", `${textWidth(p.text, 1)}em`);
+          meta.append(part);
+        }
         body.append(meta);
       }
       if (el.title) body.append(div("ntitle", el.title));
