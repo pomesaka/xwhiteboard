@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { applyOps, commentPayload, dueLabel, emptyDoc, isOverdue, localDay, metaParts, parseDoc, parseEl, serialize, statusBadge, type El, type NoteStatus } from "../src/shared/model.ts";
 
+/** 画像の名前を、置き場の絶対パスに変える（テストでは固定の置き場） */
+const imagePath = (name: string): string => `/images/${name}`;
+
 const note = (extra: Record<string, unknown>) => ({ id: "a", type: "shape", x: 0, y: 0, w: 220, h: 110, ...extra });
 const el = (extra: Partial<El>): El => ({ id: "a", type: "shape", ...extra });
 
@@ -59,7 +62,7 @@ describe("付箋の期限（due）を書く", () => {
     const doc = build([{ op: "add", el: note({ text: "見積もり", ...extra }) }, { op: "add", el: { id: "c", type: "comment", x: 10, y: 10, on: "a" } }]);
     const said = applyOps(doc, [{ op: "say", id: "c", text: "これは？" }], { by: "human", at: "2026-11-18T10:00:00+09:00" });
     if (!said.ok) throw new Error(said.error);
-    const r = commentPayload(said.value.doc, "c");
+    const r = commentPayload(said.value.doc, "c", imagePath);
     expect(r.ok && r.value.elements[0]?.due).toBe(expected);
   });
 });

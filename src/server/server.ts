@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
-import { applyOps, commentPayload, emptyDoc, isRecord, isSafeSrc, localDay, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
+import { COMMENT_IMAGE_DIR, COMMENT_IMAGE_MIME, commentImagePath, saveCommentImage } from "./comment-images.ts";
+import { applyOps, checkCommentImages, commentPayload, emptyDoc, isRecord, isSafeSrc, localDay, parseDoc, pendingChanges, serialize, trackHuman, type Applied, type Doc, type El, type Res } from "../shared/model.ts";
 import { checkBoard } from "../shared/check.ts";
 import { bandsOf, summarize } from "../shared/summary.ts";
 import { resolveBoardRef } from "../shared/rich.ts";
@@ -306,6 +307,19 @@ export async function startServer(port: number): Promise<void> {
         const applied = unwrap(applyOps(getBoard(boardPath(b.board)).doc, b.ops));
         return json({ added: applied.added, updated: applied.updated, removed: applied.removed, ...(applied.order ? { order: applied.order } : {}) });
       }
+      case "POST /api/comment/image": {
+        // コメントの入力欄に貼った画像を受け取る。本文は画像のバイト列そのもの
+        const saved = saveCommentImage(COMMENT_IMAGE_DIR, new Uint8Array(await req.arrayBuffer()), req.headers.get("content-type") ?? "");
+        if (!saved.ok) throw new HttpError(400, saved.error);
+        return json({ name: saved.value });
+      }
+      case "GET /api/comment/image": {
+        const name = q.get("name") ?? "";
+        const path = commentImagePath(COMMENT_IMAGE_DIR, name);
+        if (path === null) throw new HttpError(400, "画像の名前の形が違う");
+        if (!existsSync(path)) throw new HttpError(404, `画像が無い: ${name}`);
+        return new Response(Bun.file(path), { headers: { "content-type": COMMENT_IMAGE_MIME[name.slice(name.lastIndexOf(".") + 1)] ?? "application/octet-stream" } });
+      }
       case "POST /api/comment/send": {
         // 人がコメントに書いて「送る」を押した。本文は先にコメントへ足して残し、その後で Claude に届ける。
         // 届け先が無くても本文は消えず、unsent の印が付く。本文なしで呼ぶと、残っているものを送り直す
@@ -314,8 +328,14 @@ export async function startServer(port: number): Promise<void> {
         const id = typeof b.id === "string" ? b.id : "";
         const client = typeof b.client === "string" ? b.client : "browser";
         const text = typeof b.text === "string" ? b.text.trim() : "";
-        commitOps(board, [...(text === "" ? [] : [{ op: "say", id, text }]), { op: "set", id, patch: { unsent: true } }], client);
-        const payload = unwrap(commentPayload(board.doc, id));
+        // 名前の形は checkCommentImages で確かめた（ボードの中の名前も parseEl が同じ関数で確かめている）ので、置き場に join してよい。
+        // WHY 積む前に確かめる: 先に積むと、無い画像を指すやりとりが残る
+        const images = b.images === undefined ? [] : unwrap(checkCommentImages(b.images), 400);
+        const missing = images.find((n) => !existsSync(join(COMMENT_IMAGE_DIR, n)));
+        if (missing !== undefined) throw new HttpError(400, `画像が無い: ${missing}。貼り直す`);
+        const say = text === "" && images.length === 0 ? [] : [{ op: "say", id, text, ...(images.length > 0 ? { images } : {}) }];
+        commitOps(board, [...say, { op: "set", id, patch: { unsent: true } }], client);
+        const payload = unwrap(commentPayload(board.doc, id, (name) => join(COMMENT_IMAGE_DIR, name)));
         const targets = channelsFor(board.path);
         if (targets.length === 0) throw new HttpError(409, "Claude につながっていません");
         const line = { at: localIso(new Date()), ...payload };

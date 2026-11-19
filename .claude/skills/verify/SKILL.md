@@ -69,6 +69,20 @@ playwright-cli -s=xwbv close >/dev/null
 - 入力のダイアログ（選択バーの「見出し」「期限」「論点」「結論」の`prompt`）は、`run-code`の中で`page.on('dialog')`で答えると、次の`run-code`が`does not handle the modal state`で止まる。ボタンのクリックを待たずに`run-code`を終え（`page.click(...)`を`await`しない）、別の呼び出しで`playwright-cli -s=<名前> dialog-accept "<値>"`を打つ。取り消しは`dialog-dismiss`。
 - `playwright-cli`のセッションは、開いたフォルダごとに分かれる。`close`を別のフォルダで打つと`Browser '…' is not open`と返って閉じない。開いたフォルダ（`$DIR`）で打つ。
 - 画面の状態とボードのファイルの両方を見る。画面だけが正しい、ファイルだけが正しい、のどちらもありうる。
+- コメントの入力欄に画像を貼るのは、`run-code`の中で`navigator.clipboard.write`に画像を入れてから`Meta+V`を押す。先に`await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4801' })`が要る（`origin`は`XWB_PORT`に合わせる）。受け付けない形式や大きすぎる画像は、`new DataTransfer()`に`File`を足し、`new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })`を`.cinput`へ`dispatchEvent`する。
+
+## Claude への届き方を見る
+
+コメントの「送る」で Claude に届く中身は、チャネルを立てずに、`/api/channel`をcurlでつないで読む。ボードのフォルダ（`$DIR`）を`root`に渡す。curlは別の呼び出し（`run_in_background`）で走らせるので、その呼び出しの頭で`XWB_PORT`と`DIR`を設定し直す。つながっていないと「送る」は`Claude につながっていません`になり、やりとりに「送り直す」が出る。
+
+```bash
+curl -sN -H @<(printf 'x-xwb-token: %s' "$(cat ~/.cache/xwb/token)") "http://127.0.0.1:$XWB_PORT/api/channel?root=$(jq -rn --arg r "$DIR" '$r|@uri')&pid=1&listening=1" > "$DIR/chan.log"   # Bash の run_in_background で走らせる
+rg '^data:' "$DIR/chan.log" | tail -1 | sed 's/^data: //' | jq -c '.line | {id, text, images, elements}'
+```
+
+- トークンは`-H @<(…)`で渡す。`-H "x-xwb-token: …"`と書くと、`ps`にトークンが出る。
+- 止めるときは、`pgrep -f '^curl .*listening=1'`で番号を取り、`kill <番号>`。`^curl`を外すと、curlを走らせているシェルも当たる。
+- コメントに貼った画像は、ボードのフォルダでなく`~/.cache/xwb/images/`に書かれる。
 
 ## つつく価値のある流れ
 
@@ -89,7 +103,7 @@ playwright-cli -s=xwbv close >/dev/null
 - 書き出しの画面（`bin/xwb shot`）には、操作の部品、選択、注目が出ない。それらは画面のスクリーンショットで見る。
 - 文字の編集は、ダブルクリックで始め、Escapeで確定する。確定の後に、何も無い場所をクリックして選択を外す。
 - 要素をクリックした直後に、同じ場所からドラッグすると、ダブルクリックになって編集が始まる。選んでからつかむまで、0.7秒ほど待つ。
-- コメントのピン（`[data-id=<id>] .cpin`）を押すと欄が開き、入力欄にフォーカスが移る。Deleteキーでは消えないので、`#bar button:has-text("削除")`を押す。やりとりの無いコメントは、欄を閉じると消える。CLIで置いたコメントは、`bin/xwb reply "$BOARD" <id> 文`で1件書いてから使う。
+- コメントのピン（`[data-id=<id>] .cpin`）を押すと欄が開き、入力欄にフォーカスが移る。Deleteキーでは消えないので、`#bar button:has-text("削除")`を押す。欄はEscapeでは閉じない（入力欄のフォーカスが外れるだけ）。何も無い所をクリックして閉じる。やりとりの無いコメントは、欄を閉じると消える。CLIで置いたコメントは、`bin/xwb reply "$BOARD" <id> 文`で1件書いてから使う。
 - 断られた操作の知らせは`#toast`に出る（`hidden`でなければ表示中）。次の操作の前に、`#toast button`で閉じる。
 - このワークスペースの`.git`は、元のリポジトリを指している。`git diff HEAD`の結果は、ほかのワークスペースのコミットで変わる。変更の範囲は`jj diff`で読む。
 - 見た目を変えないはずの変更は、`bin/xwb shot`のPNGのハッシュ（`shasum -a 256`）を前後で比べる。同じボードなら同じバイト列になる。

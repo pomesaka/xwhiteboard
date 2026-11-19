@@ -1,4 +1,4 @@
-import { ALIGNS, CARRIABLE, COLORS, FONT, HEADS, MAX_COLS, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, SUMMARY_MIN_W, SUMMARY_W, TABLE_COL, dueLabel, isOverdue, localDay, metaParts, shortDay, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
+import { ALIGNS, CARRIABLE, COLORS, FONT, HEADS, MAX_COLS, MAX_COMMENT_IMAGES, NOTE_STATUS, NOTE_SUB_FONT, SHAPES, SIZES, STATUS_LABEL, SUMMARY_MIN_W, SUMMARY_W, TABLE_COL, dueLabel, isOverdue, localDay, metaParts, shortDay, statusBadge, boxOf, isRecord, isSolid, membersOf, parseEl, shifted, tableCols, textWidth, type Box, type El, type End, type Point } from "../shared/model.ts";
 
 import { LABEL_LIFT, arrowPath, labelSpot, routeArrow, type RouteEnd } from "../shared/route.ts";
 import { MARK_COLORS, isBoardRef, parseRich, resolveBoardRef, toggleMarkup, type Inline, type MarkupKind } from "../shared/rich.ts";
@@ -110,6 +110,8 @@ let fitted = false;
 let openComment: string | null = null;
 /** 開いているコメントに書きかけの文 */
 let draft = "";
+/** 開いているコメントに貼った、まだ送っていない画像の名前 */
+let draftImages: string[] = [];
 /** Claude の返事が届いて、まだ開いていないコメント */
 const unread = new Set<string>();
 
@@ -678,7 +680,9 @@ function renderComment(el: El, n: HTMLElement): void {
   const msgs = div("flex max-h-72 flex-col gap-2 overflow-y-auto overscroll-contain not-empty:mb-3");
   for (const m of thread) {
     const msg = div(`rounded-field p-2 ${m.by === "human" ? "bg-muted" : "bg-selected"}`);
-    msg.append(div("mb-1 font-bold text-muted-foreground", `${m.by === "human" ? "あなた" : "Claude"} ${m.at.slice(11, 16)}`), div("wrap-anywhere whitespace-pre-wrap", m.text));
+    msg.append(div("mb-1 font-bold text-muted-foreground", `${m.by === "human" ? "あなた" : "Claude"} ${m.at.slice(11, 16)}`));
+    if (m.text !== "") msg.append(div("wrap-anywhere whitespace-pre-wrap", m.text));
+    if (m.images) msg.append(commentImages(m.images, null));
     msgs.append(msg);
   }
   // いちばん新しいやりとりが人のものなら、Claude はまだ答えていない。届けられたかどうかで、出す状態を分ける。
@@ -691,16 +695,24 @@ function renderComment(el: El, n: HTMLElement): void {
   // cinput は、欄を探すための名前（見た目は utility）
   input.className = "cinput block w-full resize-y overscroll-contain rounded-field border border-input bg-card p-2 outline-none focus-visible:border-ring";
   input.rows = 2;
-  input.placeholder = "Claude に聞く";
+  input.placeholder = "Claude に聞く（画像を貼れる）";
   input.value = draft;
   input.addEventListener("input", () => (draft = input.value));
+  input.addEventListener("paste", (ev) => {
+    const files = [...(ev.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0) return;
+    ev.preventDefault();
+    void pasteImages(el.id, files);
+  });
   const send = (): void => {
     const text = input.value.trim();
+    const images = draftImages;
     // 送っている最中は、もう 1 回送らない（二重に届くのを防ぐ）
-    if (sending || (text === "" && !el.unsent)) return;
+    if (sending || (text === "" && images.length === 0 && !el.unsent)) return;
     draft = "";
+    draftImages = [];
     input.value = "";
-    void sendComment(el.id, text);
+    void sendComment(el.id, text, images);
   };
   input.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey) && !ev.isComposing) {
@@ -720,7 +732,16 @@ function renderComment(el: El, n: HTMLElement): void {
   });
   resolveButton.className = "cursor-pointer rounded-field px-3 py-2 text-muted-foreground hover:bg-muted focus-visible:focus-ring";
   row.append(sendButton, resolveButton);
-  panel.append(msgs, input, row);
+  panel.append(msgs, input);
+  if (draftImages.length > 0) {
+    panel.append(
+      commentImages(draftImages, (name) => {
+        draftImages = draftImages.filter((n) => n !== name);
+        redrawComment(el.id);
+      }),
+    );
+  }
+  panel.append(row);
   n.append(panel);
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -734,16 +755,69 @@ function redrawComment(id: string): void {
   if (el) renderEl(el);
 }
 
-async function sendComment(id: string, text: string): Promise<void> {
-  // 本文がサーバーに残らなかったときは、書いた文を入力欄へ戻す。消えたままにしない
+/**
+ * コメントの画像を縮小して並べる。remove を渡すと、送る前の画像として、外す「×」を付ける
+ * WHY 押しても開かない: 新しいタブで開くと、トークン付きの URL がブラウザの履歴に残る
+ */
+function commentImages(names: string[], remove: ((name: string) => void) | null): HTMLElement {
+  const box = div("mt-2 flex flex-wrap gap-2");
+  for (const name of names) {
+    const item = div("relative");
+    const img = document.createElement("img");
+    img.className = "block max-h-40 max-w-full rounded-field border border-input";
+    img.draggable = false;
+    img.alt = "貼った画像";
+    img.src = `/api/comment/image?name=${encodeURIComponent(name)}&${tokenQuery}`;
+    item.append(img);
+    if (remove) {
+      const x = button("×", false, () => remove(name), "この画像を外す");
+      x.className = "absolute top-1 right-1 cursor-pointer rounded-full bg-card px-2 font-bold text-muted-foreground shadow hover:text-card-foreground";
+      item.append(x);
+    }
+    box.append(item);
+  }
+  return box;
+}
+
+/** 入力欄に貼った画像をサーバーに置き、送る前の画像に足す */
+async function pasteImages(id: string, files: File[]): Promise<void> {
+  for (const file of files) {
+    if (draftImages.length >= MAX_COMMENT_IMAGES) {
+      toast(`画像は 1 回に ${MAX_COMMENT_IMAGES} 枚まで`);
+      break;
+    }
+    try {
+      const r = await api("/api/comment/image", { method: "POST", headers: { "content-type": file.type }, body: file });
+      const j: unknown = await r.json();
+      if (!r.ok || !isRecord(j) || typeof j.name !== "string") {
+        toast(isRecord(j) && typeof j.error === "string" ? j.error : "画像を貼れなかった");
+        continue;
+      }
+      // 貼っている間に、別のコメントへ移っていたら足さない
+      if (openComment !== id) return;
+      if (!draftImages.includes(j.name)) draftImages = [...draftImages, j.name];
+    } catch (e) {
+      toast(`サーバーに届かない: ${String(e)}`);
+    }
+  }
+  // 書きかけの文を残したまま描き直す
+  redrawComment(id);
+  const input = nodes.get(id)?.querySelector(".cinput");
+  if (input instanceof HTMLTextAreaElement) input.focus();
+}
+
+async function sendComment(id: string, text: string, images: string[]): Promise<void> {
+  // 本文がサーバーに残らなかったときは、書いた文と画像を入力欄へ戻す。消えたままにしない
   const restore = (): void => {
-    if (openComment === id && draft === "") draft = text;
+    if (openComment !== id) return;
+    if (draft === "") draft = text;
+    if (draftImages.length === 0) draftImages = images;
   };
   sendingId = id;
   redrawComment(id);
   try {
     await inflight;
-    const r = await api("/api/comment/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ board: boardPath, id, text, client: clientId }) });
+    const r = await api("/api/comment/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ board: boardPath, id, text, ...(images.length > 0 ? { images } : {}), client: clientId }) });
     if (r.ok) {
       sentId = id;
       setTimeout(() => {
@@ -766,11 +840,32 @@ async function sendComment(id: string, text: string): Promise<void> {
   }
 }
 
+/** コメントで指せる要素。線と、コメントそのものは指さない（コメントを置く道具の、押した所の要素と同じ決まり） */
+function commentable(el: El): boolean {
+  return el.type !== "arrow" && el.type !== "stroke" && el.type !== "comment";
+}
+
+/**
+ * 選んだ要素にコメントする。その要素を指す未解決のコメントがあれば、それを開く。無ければ、要素の右上の角にピンを置く
+ * WHY あるものを開く: 同じ要素に何度もピンを置くと、重なって見分けられない
+ */
+function commentOn(target: El): void {
+  const existing = [...els.values()].find((e) => e.type === "comment" && e.on === target.id && !e.resolved);
+  if (existing) {
+    if (existing.id !== openComment) openCommentPanel(existing.id);
+    return;
+  }
+  const b = rectOf(target);
+  if (!b) return;
+  void addEl({ type: "comment", x: round(b.x + b.w), y: round(b.y), on: target.id }).then((el) => el && openCommentPanel(el.id));
+}
+
 function openCommentPanel(id: string): void {
   const prev = openComment;
   if (prev && prev !== id) closeComment();
   openComment = id;
   draft = "";
+  draftImages = [];
   unread.delete(id);
   const el = els.get(id);
   if (el) renderEl(el);
@@ -1359,6 +1454,12 @@ function renderBar(): void {
   }
   bar.hidden = sel.length === 0 || exporting;
   if (sel.length === 0) return;
+  // 1 つだけ選んでいれば、その要素にコメントできる。固定した要素にも付けられる（中身を変えないので）
+  const target = sel.length === 1 ? sel[0] : undefined;
+  if (target && commentable(target)) {
+    add(button("コメント", false, () => commentOn(target), "この要素を指して Claude に聞く"));
+    sep();
+  }
   // 固定した要素を選んでいる間は、固定を外すボタンだけを出す（色や形も、固定を外すまで変えられない）
   if (sel.some(isLocked)) {
     add(button("固定を外す", true, () => void setOps(sel.filter(isLocked).map((e) => ({ id: e.id, patch: { locked: null } })))));
@@ -1800,7 +1901,7 @@ stage.addEventListener("pointerdown", (ev) => {
     const under = hitId(ev.target);
     const onEl = under ? els.get(under) : undefined;
     // 押した場所に要素があれば、その要素を指すピンにする（線とコメントは指せない）
-    const onId = onEl && onEl.type !== "arrow" && onEl.type !== "stroke" && onEl.type !== "comment" ? onEl.id : null;
+    const onId = onEl && commentable(onEl) ? onEl.id : null;
     gesture = { kind: "marquee", start: p, sx, sy, purpose: "comment", onId };
   } else if (tool === "arrow") {
     gesture = { kind: "arrow", from: hitId(ev.target) ?? [round(p[0]), round(p[1])], start: p };

@@ -553,6 +553,7 @@ describe("検査の種類（崩れと書き方の提案）", () => {
     ["nested-section", "break"],
     ["summary-in-section", "break"],
     ["empty-summary", "break"],
+    ["dead-comment-target", "break"],
     ["handwritten-field", "style"],
     ["long-title", "style"],
     ["open-question", "style"],
@@ -563,5 +564,19 @@ describe("検査の種類（崩れと書き方の提案）", () => {
     ["duplicate-summary", "style"],
   ])("規則の種類: %s は %s", (kind, level) => {
     expect(LEVEL[kind]).toBe(level);
+  });
+});
+
+describe("コメントの指す先", () => {
+  const comment = (extra: Record<string, unknown>) => add({ id: "c", type: "comment", x: 0, y: 0, ...extra });
+  test.each([
+    ["指す先がある", [box("a", 0, 0), comment({ on: "a" })], []],
+    ["指す先が無く、未解決", [comment({ on: "gone" })], ["dead-comment-target:c"]],
+    ["指す先が無いが、解決済み", [comment({ on: "gone", resolved: true })], []],
+    ["何も指さないピン", [comment({})], []],
+    ["範囲のコメント", [comment({ w: 100, h: 100 })], []],
+    ["指していた要素を消した", [box("a", 0, 0), comment({ on: "a" }), { op: "rm", id: "a" }], ["dead-comment-target:c"]],
+  ])("%s", (_name, ops, expected) => {
+    expect(check(ops)).toEqual(expected);
   });
 });

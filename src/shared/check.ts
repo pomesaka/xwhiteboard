@@ -60,7 +60,9 @@ export type IssueKind =
   /** 発言者か tag で集めるまとめの帯に、当たる付箋が 1 枚も無い */
   | "empty-summary"
   /** まとめの帯が、セクションの中にある */
-  | "summary-in-section";
+  | "summary-in-section"
+  /** 未解決のコメントの on が、ボードに無い要素を指している */
+  | "dead-comment-target";
 
 /**
  * 検査の種類。break は崩れ（見た目が壊れている、押しても動かない、書いた意図どおりに描けていない）。いつも出す。
@@ -94,6 +96,8 @@ export const LEVEL: Record<IssueKind, IssueLevel> = {
   "summary-in-section": "break",
   // 書いた条件が、意図した付箋を集めていない
   "empty-summary": "break",
+  // ピンが要素に付いて動かず、Claude に届く中身から、指していた要素が抜ける
+  "dead-comment-target": "break",
   "handwritten-field": "style",
   "long-title": "style",
   "open-question": "style",
@@ -506,6 +510,13 @@ function findIssues(doc: Doc, ctx: CheckContext): Found[] {
       for (const ref of boardRefs(el)) {
         if (!ctx.boardExists(ref)) issues.push({ kind: "dead-link", ids: [el.id], message: `${el.id} のリンクの行き先のボードが無い: ${ref}。パスを直すか、xwb open でボードを作る` });
       }
+    }
+  }
+  // コメントが指す要素。指す先を消しても、コメントは残る
+  const ids = new Set(doc.elements.map((e) => e.id));
+  for (const el of doc.elements) {
+    if (el.type === "comment" && el.on !== undefined && !el.resolved && !ids.has(el.on)) {
+      issues.push({ kind: "dead-comment-target", ids: [el.id], message: `コメント ${el.id} が指す要素 ${el.on} がボードに無い。指す先を直す（set で on）か、話が済んでいれば解決にする` });
     }
   }
   // 論点を書いたセクションの結論。会議の終わりに、結論の出ていない論点を拾えるようにする

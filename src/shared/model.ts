@@ -76,6 +76,24 @@ export interface Message {
   by: (typeof SPEAKERS)[number];
   at: string;
   text: string;
+  /** 貼った画像のファイル名（COMMENT_IMAGE_RE の形）。ファイルはボードのフォルダでなく、サーバーの画像の置き場にある */
+  images?: string[];
+}
+
+/**
+ * コメントに貼った画像のファイル名。中身の sha256 と拡張子で、同じ画像は同じ名前になる。
+ * WHY 名前の形を決めておく: サーバーは、この名前で置き場のファイルを返す。形を決めておけば、ほかの場所のファイルを指せない
+ */
+export const COMMENT_IMAGE_RE = /^[0-9a-f]{64}\.(png|jpg|gif|webp)$/;
+/** 1 件のやりとりに貼れる画像の数 */
+export const MAX_COMMENT_IMAGES = 4;
+
+/** やりとりの images を確かめる。形が違えば、理由を返す */
+export function checkCommentImages(v: unknown): Res<string[]> {
+  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_COMMENT_IMAGES || !v.every((n) => typeof n === "string" && COMMENT_IMAGE_RE.test(n))) {
+    return fail(`images は、画像のファイル名（sha256 の 16 進 64 文字.png|jpg|gif|webp）を 1〜${MAX_COMMENT_IMAGES} 個並べた配列`);
+  }
+  return ok(v.filter((n) => typeof n === "string"));
 }
 
 export interface El {
@@ -500,8 +518,14 @@ export function parseEl(raw: unknown): Res<El> {
         if (!Array.isArray(v)) return fail("thread は配列");
         const thread: Message[] = [];
         for (const m of v) {
-          if (!isRecord(m) || !isOneOf(SPEAKERS, m.by) || typeof m.at !== "string" || typeof m.text !== "string") return fail("thread の 1 件は { by: human | claude, at, text }");
-          thread.push({ by: m.by, at: m.at, text: m.text });
+          if (!isRecord(m) || !isOneOf(SPEAKERS, m.by) || typeof m.at !== "string" || typeof m.text !== "string") return fail("thread の 1 件は { by: human | claude, at, text, images? }");
+          if (m.images === undefined) {
+            thread.push({ by: m.by, at: m.at, text: m.text });
+            continue;
+          }
+          const images = checkCommentImages(m.images);
+          if (!images.ok) return fail(`thread の ${images.error}`);
+          thread.push({ by: m.by, at: m.at, text: m.text, images: images.value });
         }
         el.thread = thread;
         break;
@@ -1233,7 +1257,9 @@ export interface CommentPayload {
   id: string;
   /** 今回送った本文（いちばん新しい、人のやりとり） */
   text: string;
-  /** それより前のやりとり */
+  /** 今回送ったやりとりに貼った画像の絶対パス。Claude が読める */
+  images: string[];
+  /** それより前のやりとり。images は絶対パス */
   thread: Message[];
   resolved: boolean;
   anchor: { type: "area"; x: number; y: number; w: number; h: number } | { type: "pin"; x: number; y: number; on?: string };
@@ -1250,14 +1276,19 @@ function briefOf(el: El): Record<string, unknown> {
   return out;
 }
 
-/** コメント 1 件を Claude に届ける中身 */
-export function commentPayload(doc: Doc, id: string): Res<CommentPayload> {
+/**
+ * コメント 1 件を Claude に届ける中身。imagePath は、画像のファイル名を、置き場の絶対パスに変える（置き場を知っているのはサーバー）
+ * ピンがセクションを指すときは、セクションと、その中身を全部入れる。Claude が、ボードを読み直さずにセクションの話に答えられるように
+ */
+export function commentPayload(doc: Doc, id: string, imagePath: (name: string) => string): Res<CommentPayload> {
   const c = doc.elements.find((e) => e.id === id);
   if (!c || c.type !== "comment") return fail(`コメントが無い: ${id}`);
-  const thread = c.thread ?? [];
+  const withPaths = (m: Message): Message => (m.images ? { ...m, images: m.images.map(imagePath) } : m);
+  const thread = (c.thread ?? []).map(withPaths);
   const last = thread.findLastIndex((m) => m.by === "human");
-  const text = thread[last]?.text;
-  if (text === undefined) return fail("送る本文が無い");
+  const sent = thread[last];
+  if (sent === undefined) return fail("送る本文が無い");
+  const text = sent.text;
   const x = c.x ?? 0;
   const y = c.y ?? 0;
   const area = c.w !== undefined && c.h !== undefined ? { x, y, w: c.w, h: c.h } : null;
@@ -1266,11 +1297,14 @@ export function commentPayload(doc: Doc, id: string): Res<CommentPayload> {
     const b = boxOf(e);
     return area !== null && b !== null && centerIn(b, area);
   };
-  const elements = doc.elements.filter((e) => (area ? inside(e) : e.id === c.on)).map(briefOf);
+  const target = area ? undefined : doc.elements.find((e) => e.id === c.on);
+  const pinned = target === undefined ? [] : target.type === "container" ? [target, ...membersOf(doc.elements, target).filter((e) => e.type !== "comment")] : [target];
+  const elements = (area ? doc.elements.filter(inside) : pinned).map(briefOf);
   return ok({
     kind: "comment",
     id,
     text,
+    images: sent.images ?? [],
     thread: thread.slice(0, last),
     resolved: c.resolved === true,
     anchor: area ? { type: "area", ...area } : { type: "pin", x, y, ...(c.on === undefined ? {} : { on: c.on }) },
@@ -1600,9 +1634,14 @@ export function applyOps(base: Doc, ops: unknown, ctx: OpsContext = { by: "claud
       case "say": {
         const el = typeof op.id === "string" ? byId.get(op.id) : undefined;
         if (!el || el.type !== "comment") return fail(`${at}: id ${JSON.stringify(op.id)} のコメントが無い`);
-        if (typeof op.text !== "string" || op.text.trim() === "") return fail(`${at}: say には text（本文）が要る`);
+        const images = op.images === undefined ? null : checkCommentImages(op.images);
+        if (images && !images.ok) return fail(`${at}: ${images.error}`);
+        const text = typeof op.text === "string" ? op.text.trim() : op.text === undefined && images ? "" : null;
+        // 画像だけのやりとりは、本文が空でよい
+        if (text === null || (text === "" && !images)) return fail(`${at}: say には text（本文）か images（画像）が要る`);
+        const message: Message = images ? { by: ctx.by, at: ctx.at, text, images: images.value } : { by: ctx.by, at: ctx.at, text };
         // WHY 専用の操作: set で thread を丸ごと書き直すと、同時に書かれた相手のやりとりを消す
-        replace({ ...el, thread: [...(el.thread ?? []), { by: ctx.by, at: ctx.at, text: op.text.trim() }] });
+        replace({ ...el, thread: [...(el.thread ?? []), message] });
         touch(el.id);
         break;
       }

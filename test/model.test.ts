@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { applyOps, colWidth, membersOf, sectionTop, statusBadge, commentPayload, emptyDoc, parseDoc, parseEl, pendingChanges, serialize, trackHuman, type Doc } from "../src/shared/model.ts";
 
+/** 画像の名前を、置き場の絶対パスに変える（テストでは固定の置き場） */
+const imagePath = (name: string): string => `/images/${name}`;
+
+/** 形に合う画像の名前。seed ごとに違う 16 進 64 文字にする */
+const imageName = (seed: string, ext = "png"): string => `${seed.repeat(64).slice(0, 64).replace(/[^0-9a-f]/g, "0")}.${ext}`;
+
+/** やりとりを持つピンのコメント */
+const commentWith = (thread: unknown[]): Record<string, unknown> => ({ id: "c", type: "comment", x: 0, y: 0, thread });
+
 function build(ops: unknown[], base: Doc = emptyDoc("t")): Doc {
   const r = applyOps(base, ops);
   if (!r.ok) throw new Error(r.error);
@@ -39,6 +48,20 @@ describe("parseEl は、形に合わない要素を理由を付けて断る", ()
     ["画像の href が絶対パスのボード", { id: "a", type: "image", x: 0, y: 0, w: 1, h: 1, src: "x.png", href: "/m/a.board.json" }, "href は"],
     ["大きさが 0", { id: "a", type: "shape", x: 0, y: 0, w: 0, h: 1 }, "w は正の数値"],
     ["線の点が 1 つ", { id: "a", type: "stroke", points: [[0, 0]] }, "points は"],
+    ...(
+      [
+        ["5 枚（上限の 4 を超える）", Array.from({ length: 5 }, (_, i) => imageName(String(i)))],
+        ["空の配列", []],
+        ["63 文字の 16 進", [`${"a".repeat(63)}.png`]],
+        ["16 進でない文字", [`${"g".repeat(64)}.png`]],
+        ["大文字の 16 進", [`${"A".repeat(64)}.png`]],
+        ["拡張子が jpeg", [`${"a".repeat(64)}.jpeg`]],
+        ["拡張子が svg", [`${"a".repeat(64)}.svg`]],
+        ["上のフォルダを指す", [`../${"a".repeat(64)}.png`]],
+        ["配列でない", `${"a".repeat(64)}.png`],
+        ["要素が文字列でない", [1]],
+      ] as const
+    ).map(([name, images]): [string, Record<string, unknown>, string] => [`コメントの画像が${name}`, commentWith([{ by: "human", at: "t", text: "", images }]), "images は"]),
   ])("%s", (_name, raw, message) => {
     const r = parseEl(raw);
     expect(r.ok).toBe(false);
@@ -298,12 +321,13 @@ describe("コメント", () => {
   });
 
   test("Claude に届ける中身は、今回の本文、それまでのやりとり、枠、枠の中の要素の文字", () => {
-    expect(commentPayload(talked, "area")).toEqual({
+    expect(commentPayload(talked, "area", imagePath)).toEqual({
       ok: true,
       value: {
         kind: "comment",
         id: "area",
         text: "期限は？",
+        images: [],
         thread: [
           { by: "human", at: human.at, text: "これは何？" },
           { by: "claude", at: claude.at, text: "論点です" },
@@ -322,7 +346,7 @@ describe("コメント", () => {
     ["要素を指すピンは、その要素だけを付ける", "pin", { type: "pin", x: 900, y: 60, on: "out" }, ["out"]],
     ["何も指さないピンは、要素を付けない", "free", { type: "pin", x: 2000, y: 2000 }, []],
   ])("%s", (_name, id, anchor, ids) => {
-    const r = commentPayload(say(base, id, "ここ", human), id);
+    const r = commentPayload(say(base, id, "ここ", human), id, imagePath);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect<unknown>(r.value.anchor).toEqual(anchor);
@@ -333,7 +357,7 @@ describe("コメント", () => {
     ["人の本文が無いコメントは送れない", "area", "送る本文が無い"],
     ["コメントでない要素は送れない", "in1", "コメントが無い"],
   ])("%s", (_name, id, message) => {
-    const r = commentPayload(base, id);
+    const r = commentPayload(base, id, imagePath);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain(message);
   });
@@ -761,5 +785,110 @@ describe("cols を書いたセクションを、ほかのセクションに重�
     const r = applyOps(base, [set("g5", { x: 0, y: 0 }), set("g5", { x: 2000, y: 0 })]);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("セクション g5 が、セクション g3 に重なる");
+  });
+});
+
+describe("コメントの画像", () => {
+  const human = { by: "human" as const, at: "2026-11-19T10:00:00+09:00" };
+  const claude = { by: "claude" as const, at: "2026-11-19T10:01:00+09:00" };
+  const one = imageName("1");
+  const two = imageName("2", "jpg");
+  const pin = build([{ op: "add", el: { id: "c", type: "comment", x: 0, y: 0 } }]);
+  const sayOps = (doc: Doc, ops: unknown[], ctx: typeof human | typeof claude = human) => applyOps(doc, ops, ctx);
+
+  test.each([
+    ["1 枚", [one]],
+    ["4 枚（上限）と、拡張子 4 種", [imageName("1"), imageName("2", "jpg"), imageName("3", "gif"), imageName("4", "webp")]],
+  ])("やりとりの images を読める: %s", (_name, images) => {
+    const r = parseEl(commentWith([{ by: "human", at: "t", text: "", images }]));
+    expect(r.ok && r.value.thread?.[0]?.images).toEqual(images);
+  });
+
+  test.each([
+    ["画像の無いやりとりだけ（前のボード）", [{ by: "human", at: "t", text: "前の" }]],
+    ["画像のあるやりとりと無いやりとり", [{ by: "human", at: "t", text: "これ", images: [one, two] }, { by: "claude", at: "t", text: "はい" }]],
+  ])("ファイルに書いて読み直すと同じになる: %s", (_name, thread) => {
+    const doc = { ...emptyDoc("t"), elements: [commentWith(thread)] };
+    const text = JSON.stringify(doc);
+    const parsed = parseDoc(text);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(parseDoc(serialize(parsed.value))).toEqual(parsed);
+    expect<unknown>(find(parsed.value, "c")?.thread).toEqual(thread);
+  });
+
+  test.each([
+    ["文と画像", { text: "ここ", images: [one] }, { ...human, text: "ここ", images: [one] }],
+    ["画像だけ（text を書かない）", { images: [one] }, { ...human, text: "", images: [one] }],
+    ["空白だけの文と画像", { text: "  ", images: [one] }, { ...human, text: "", images: [one] }],
+    ["文だけ（images の項目を作らない）", { text: "ここ" }, { ...human, text: "ここ" }],
+  ])("say は、文と画像を 1 件のやりとりとして積む: %s", (_name, fields, expected) => {
+    const r = sayOps(pin, [{ op: "say", id: "c", ...fields }]);
+    if (!r.ok) throw new Error(r.error);
+    expect(find(r.value.doc, "c")?.thread).toEqual([expected]);
+  });
+
+  test.each([
+    ["文も画像も無い", {}, "text（本文）か images"],
+    ["文が空で画像も無い", { text: "" }, "text（本文）か images"],
+    ["画像が空の配列で文が空", { text: "", images: [] }, "images は"],
+    ["画像が空の配列で文がある", { text: "ここ", images: [] }, "images は"],
+    ["画像が 5 枚", { text: "ここ", images: Array.from({ length: 5 }, (_, i) => imageName(String(i))) }, "images は"],
+    ["画像の名前の形が違う", { text: "ここ", images: ["x.png"] }, "images は"],
+  ])("say は断る: %s", (_name, fields, message) => {
+    const r = sayOps(pin, [{ op: "say", id: "c", ...fields }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain(message);
+  });
+
+  test.each([
+    ["今回のやりとりに 2 枚", [{ op: "say", id: "c", text: "これ", images: [one, two] }], "これ", [`/images/${one}`, `/images/${two}`], []],
+    ["画像だけのやりとり（本文が空でも送れる）", [{ op: "say", id: "c", images: [one] }], "", [`/images/${one}`], []],
+    [
+      "前のやりとりの画像も絶対パスにする。画像の無い件には images を付けない",
+      [{ op: "say", id: "c", text: "前", images: [two] }, { op: "say", id: "c", text: "今回" }],
+      "今回",
+      [],
+      [{ ...human, text: "前", images: [`/images/${two}`] }],
+    ],
+  ])("届く中身の画像: %s", (_name, ops, text, images, thread) => {
+    const r = sayOps(pin, ops);
+    if (!r.ok) throw new Error(r.error);
+    const p = commentPayload(r.value.doc, "c", imagePath);
+    if (!p.ok) throw new Error(p.error);
+    expect([p.value.text, p.value.images, p.value.thread]).toEqual([text, images, thread]);
+  });
+
+  test("Claude のやりとりの画像も、前のやりとりで絶対パスになる", () => {
+    const r = sayOps(pin, [{ op: "say", id: "c", text: "見て", images: [one] }]);
+    if (!r.ok) throw new Error(r.error);
+    const r2 = sayOps(r.value.doc, [{ op: "say", id: "c", text: "図です", images: [two] }], claude);
+    if (!r2.ok) throw new Error(r2.error);
+    const r3 = sayOps(r2.value.doc, [{ op: "say", id: "c", text: "次" }]);
+    if (!r3.ok) throw new Error(r3.error);
+    const p = commentPayload(r3.value.doc, "c", imagePath);
+    expect(p.ok && p.value.thread.map((m) => m.images)).toEqual([[`/images/${one}`], [`/images/${two}`]]);
+  });
+});
+
+describe("セクションを指すピンには、セクションと中身が届く", () => {
+  const board = build([
+    { op: "add", el: { id: "sec", type: "container", x: 0, y: 0, w: 800, h: 600, title: "議題" } },
+    { op: "add", el: { id: "a", type: "shape", x: 24, y: 52, text: "一つめ" } },
+    { op: "add", el: { id: "inner", type: "container", x: 300, y: 52, w: 400, h: 300, title: "中の議題" } },
+    { op: "add", el: { id: "b", type: "shape", x: 324, y: 104, text: "中の付箋" } },
+    { op: "add", el: { id: "note", type: "comment", x: 100, y: 400, w: 100, h: 100 } },
+    { op: "add", el: { id: "out", type: "shape", x: 1200, y: 52, text: "枠の外" } },
+    { op: "add", el: { id: "frame", type: "container", x: 1200, y: 400, w: 300, h: 200, frame: "none" } },
+    { op: "add", el: { id: "f1", type: "shape", x: 1224, y: 424, text: "枠の中" } },
+  ]);
+  test.each([
+    ["セクション: 自身が先頭で、中身は要素の並び順。中のセクションとコメントは入らず、中のセクションの中身は入る", "sec", ["sec", "a", "b"]],
+    ["透明な枠も、同じ決まりで中身が入る", "frame", ["frame", "f1"]],
+    ["セクションでない要素は、その 1 つだけ", "a", ["a"]],
+  ])("%s", (_name, on, ids) => {
+    const r = applyOps(board, [{ op: "add", el: { id: "pin", type: "comment", x: 0, y: 0, on } }, { op: "say", id: "pin", text: "ここ" }], { by: "human", at: "t" });
+    if (!r.ok) throw new Error(r.error);
+    const p = commentPayload(r.value.doc, "pin", imagePath);
+    expect(p.ok && p.value.elements.map((e) => e.id)).toEqual(ids);
   });
 });
