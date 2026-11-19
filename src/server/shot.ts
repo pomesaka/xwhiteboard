@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { boundsOf, type Doc, type Res } from "../shared/model.ts";
 
 const BROWSERS = [
@@ -33,8 +34,13 @@ export async function shoot(pageUrl: string, doc: Doc, out: string, scale: numbe
   const w = Math.max(400, Math.ceil(b.w + SHOT_MARGIN * 2));
   const h = Math.max(300, Math.ceil(b.h + SHOT_MARGIN * 2));
   const k = Math.min(scale, MAX_SIDE / w, MAX_SIDE / h);
+  // mkdtemp のフォルダは権限 700 で、本人のほかは中を読めない
   const profile = mkdtempSync(join(tmpdir(), "xwb-chrome-"));
   try {
+    // WHY URL をファイルに書いて、Chrome にはファイルのパスを渡す: pageUrl にはトークン（#k=…）が入る。
+    // 起動の引数に載せると、Chrome が動いている間、この Mac のほかの利用者からも ps で見える
+    const start = join(profile, "start.html");
+    writeFileSync(start, `<!doctype html><meta charset="utf-8"><script>location.replace(${JSON.stringify(pageUrl).replaceAll("<", "\\u003c")})</script>`, { mode: 0o600 });
     const proc = Bun.spawn(
       [
         browser,
@@ -48,7 +54,7 @@ export async function shoot(pageUrl: string, doc: Doc, out: string, scale: numbe
         `--window-size=${w},${h}`,
         "--virtual-time-budget=4000",
         `--screenshot=${out}`,
-        pageUrl,
+        pathToFileURL(start).href,
       ],
       { stdout: "ignore", stderr: "pipe" },
     );
