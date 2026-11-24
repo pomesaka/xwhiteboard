@@ -37,6 +37,7 @@ export type IssueKind =
   | "dead-link"
   /** URL が、リンクの形（[文字](https://…)）で書かれていなくて、押せない */
   | "bare-url"
+  | "bare-domain"
   /** 列で並べるセクション（cols）の 1 列が狭くて、付箋の文字が入りにくい */
   | "narrow-column"
   /** 付箋の欄（title・status・carriedFrom）に書けることを、本文や札（tag）に手で書いている */
@@ -89,6 +90,7 @@ export const LEVEL: Record<IssueKind, IssueLevel> = {
   "highlight-contrast": "break",
   "dead-link": "break",
   "bare-url": "break",
+  "bare-domain": "style",
   "narrow-column": "break",
   "nested-section": "break",
   // 見えない枠が場所を取り、format で 1 つのまとまりとして動く。画面では気づけないが、見た目は崩れていない
@@ -500,7 +502,14 @@ function findIssues(doc: Doc, ctx: CheckContext): Found[] {
   issues.push(...summaryIssues(doc));
   // リンクの形で書いていない URL。画面ではただの文字で出て、押せない
   for (const el of doc.elements) {
-    const found = richTexts(el).flatMap(bareUrls);
+    const all = richTexts(el).flatMap(bareUrls);
+    // ドメインだけの形は、社名や製品名（Trip.com）として書くことが多い。崩れにせず、書き方の提案で聞く
+    const names = new Map(all.filter((u) => u.domainOnly).map((u) => [u.url, u.href]));
+    if (names.size > 0) {
+      const linked = [...names.values()].map((href) => `[表示](${href})`);
+      issues.push({ kind: "bare-domain", ids: [el.id], message: `${el.id} の「${[...names.keys()].join("」「")}」は、ただの文字で出る。名前として書いたならこのままでよい。押せるリンクにするなら、リンクの形で書く: ${linked.join("、")}（「表示」は、行き先が分かる短い名前に替える）` });
+    }
+    const found = all.filter((u) => !u.domainOnly);
     // 装飾の中の URL は、直し方が違うので、知らせを分ける
     for (const decorated of [false, true]) {
       const urls = new Map(found.filter((u) => u.decorated === decorated).map((u) => [u.url, u.href]));

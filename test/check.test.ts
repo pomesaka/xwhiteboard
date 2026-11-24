@@ -180,19 +180,19 @@ describe("リンクの形で書いていない URL", () => {
     ["スキームの無いドメインは、https:// を付けて案内する", { id: "a", type: "shape", text: "example.com/docs を見る" }, ["a: a の URL（example.com/docs）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/docs)" + hint]],
     [
       "1 つの要素にいくつあっても、知らせは 1 件。同じ URL は 1 回だけ出す",
-      { id: "a", type: "shape", text: "https://example.com/a と example.org\nhttps://example.com/a" },
-      ["a: a の URL（https://example.com/a、example.org）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)、[表示](https://example.org)" + hint],
+      { id: "a", type: "shape", text: "https://example.com/a と example.org/b\nhttps://example.com/a" },
+      ["a: a の URL（https://example.com/a、example.org/b）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)、[表示](https://example.org/b)" + hint],
     ],
     ["文字（text）の要素", { id: "x", type: "text", text: "http://example.com", x: 0, y: 0 }, ["x: x の URL（http://example.com）は、ただの文字で出て押せない。リンクの形で書く: [表示](http://example.com)" + hint]],
     ["表のセル", { id: "t", type: "table", rows: [["a", "https://example.com/a"]] }, ["t: t の URL（https://example.com/a）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)" + hint]],
-    ["表の見出し", { id: "t", type: "table", head: ["example.com"], rows: [["a"]] }, ["t: t の URL（example.com）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com)" + hint]],
+    ["表の見出し", { id: "t", type: "table", head: ["example.com/a"], rows: [["a"]] }, ["t: t の URL（example.com/a）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/a)" + hint]],
     ["括弧は % で、スキームは小文字で案内する", { id: "a", type: "shape", text: "HTTPS://example.com/wiki/Foo_(bar)" }, ["a: a の URL（HTTPS://example.com/wiki/Foo_(bar)）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com/wiki/Foo_%28bar%29)" + hint]],
     ["装飾の中の URL には、装飾を外すよう案内する", { id: "a", type: "shape", text: "**https://example.com/a**" }, ["a: a の URL（https://example.com/a）は、" + decorated + ": [表示](https://example.com/a)" + hint]],
     ["装飾の中に書いたリンクの形にも、同じ案内を出す", { id: "a", type: "shape", text: "==[仕様](https://example.com/a)==" }, ["a: a の URL（https://example.com/a）は、" + decorated + ": [表示](https://example.com/a)" + hint]],
     [
       "装飾の中と外の両方にあれば、知らせを分ける",
-      { id: "a", type: "shape", text: "example.org と **example.com**" },
-      ["a: a の URL（example.org）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.org)" + hint, "a: a の URL（example.com）は、" + decorated + ": [表示](https://example.com)" + hint],
+      { id: "a", type: "shape", text: "example.org/a と **example.com/b**" },
+      ["a: a の URL（example.org/a）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.org/a)" + hint, "a: a の URL（example.com/b）は、" + decorated + ": [表示](https://example.com/b)" + hint],
     ],
     ["リンクの形で書いた URL は知らせない", { id: "a", type: "shape", text: "[仕様](https://example.com/a)" }, []],
     ["コードの中の URL は知らせない", { id: "a", type: "shape", text: "`https://example.com/a`" }, []],
@@ -201,6 +201,30 @@ describe("リンクの形で書いていない URL", () => {
     ["セクションの題名は見ない", { id: "s", type: "container", title: "https://example.com/a", x: 0, y: 0, w: 400, h: 200 }, []],
   ])("%s", (_name, el, expected) => {
     expect(run(el)).toEqual(expected);
+  });
+
+  // ドメインだけの形は、社名や製品名として書くことが多い。崩れにせず、書き方の提案で聞く
+  const kinds = (text: string, style: boolean): string[] => {
+    const r = applyOps(emptyDoc("t"), [add({ id: "a", type: "shape", text })]);
+    if (!r.ok) throw new Error(r.error);
+    return checkAll(r.value.doc, { style }).filter((i) => i.kind === "bare-url" || i.kind === "bare-domain").map((i) => `${i.kind}: ${i.message}`);
+  };
+  const named = "は、ただの文字で出る。名前として書いたならこのままでよい。押せるリンクにするなら、リンクの形で書く: ";
+  test.each<[string, string, boolean, string[]]>([
+    ["社名の形は、崩れに出さない", "OTA は Trip.com と Booking.com", false, []],
+    ["社名の形は、書き方の提案に出す", "OTA は Trip.com と Amazon.co.jp", true, ["bare-domain: a の「Trip.com」「Amazon.co.jp」" + named + "[表示](https://Trip.com)、[表示](https://Amazon.co.jp)" + hint]],
+    ["www. で始まれば URL として崩れに出す", "www.example.com", false, ["bare-url: a の URL（www.example.com）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://www.example.com)" + hint]],
+    ["パスがあれば URL として崩れに出す", "hotels.com/ja", false, ["bare-url: a の URL（hotels.com/ja）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://hotels.com/ja)" + hint]],
+    ["ポートがあれば URL として崩れに出す", "example.com:8080", false, ["bare-url: a の URL（example.com:8080）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://example.com:8080)" + hint]],
+    ["スキームがあれば URL として崩れに出す", "https://trip.com", false, ["bare-url: a の URL（https://trip.com）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://trip.com)" + hint]],
+    [
+      "名前と URL が混ざれば、別々に出す",
+      "Trip.com の https://trip.com/a",
+      true,
+      ["bare-domain: a の「Trip.com」" + named + "[表示](https://Trip.com)" + hint, "bare-url: a の URL（https://trip.com/a）は、ただの文字で出て押せない。リンクの形で書く: [表示](https://trip.com/a)" + hint],
+    ],
+  ])("ドメインだけの形: %s", (_name, text, style, expected) => {
+    expect(kinds(text, style)).toEqual(expected);
   });
 });
 
@@ -549,6 +573,7 @@ describe("検査の種類（崩れと書き方の提案）", () => {
     ["highlight-contrast", "break"],
     ["dead-link", "break"],
     ["bare-url", "break"],
+    ["bare-domain", "style"],
     ["narrow-column", "break"],
     ["nested-section", "break"],
     ["summary-in-section", "break"],

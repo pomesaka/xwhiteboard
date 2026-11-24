@@ -170,6 +170,7 @@ const URL_CHARS = "[A-Za-z0-9\\-._~:/?#@!$&'()*+,;=%]";
 // WHY 末尾は小文字だけ: 名前として書いた語（ASP.NET、Socket.IO）を拾わない。ホスト名の大文字（GitHub.com）は拾う
 const BARE_DOMAIN = `(?<![\\w@./:-])(?:[A-Za-z0-9-]+\\.)+(?:com|net|org|io|dev|ai|jp)(?![\\w-]|\\.[A-Za-z0-9])(?::\\d+)?(?:[/?#]${URL_CHARS}*)?`;
 const SCHEME = /^https?:\/\//i;
+const DOMAIN_ONLY = /^(?!www\.)[A-Za-z0-9.-]+$/i;
 const BARE_URL = new RegExp(`[Hh][Tt][Tt][Pp][Ss]?://[A-Za-z0-9]${URL_CHARS}*|${BARE_DOMAIN}`, "g");
 
 /** URL の終わりから、文の句読点と、対になる開き括弧の無い閉じ括弧を除く（「（https://example.com/a）。」の「）。」） */
@@ -189,6 +190,11 @@ export interface BareUrl {
   href: string;
   /** 装飾（太字、斜体、取り消し線、蛍光ペン）の中にあるか。装飾は重ねられないので、中をリンクの形に直してもリンクにならない */
   decorated: boolean;
+  /**
+   * スキームも www. も、ポートとパスも無い、ドメインだけの形（Trip.com、example.org）か。
+   * WHY: この形は、社名や製品名（Booking.com、Amazon.co.jp）として書くことが多く、URL と決められない
+   */
+  domainOnly: boolean;
 }
 
 /**
@@ -212,7 +218,7 @@ export function bareUrls(text: string): BareUrl[] {
     if (i.kind === "code" || i.kind === "link") return [];
     return [...i.text.matchAll(BARE_URL)].map((m) => {
       const url = trimUrl(m[0]);
-      return { url, href: linkHref(url), decorated: i.kind !== "text" };
+      return { url, href: linkHref(url), decorated: i.kind !== "text", domainOnly: DOMAIN_ONLY.test(url) };
     });
   });
 }
