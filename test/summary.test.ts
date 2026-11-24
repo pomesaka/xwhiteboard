@@ -560,6 +560,8 @@ describe("帯の検査", () => {
     ["帯と付箋が重なる", [add(band()), add(note("a", { x: 100, y: 20 }))], ["overlap:sum,a"]],
     ["間を空けて置いた帯と付箋", [add(band()), add(note("a", { x: 0, y: 200 }))], []],
     ["帯がセクションの枠にかかる", [add(section("c", 300, 0)), add(band())], ["on-section-edge:sum,c"]],
+    // 帯は中身でないので、はみ出し（outside-section）や余白では知らせない
+    ["帯の中心が枠の中にあり、一部がはみ出す", [add(section("c", 100, 0)), add(band())], ["summary-in-section:sum,c"]],
   ])("帯は、場所をふさぐ: %s", (_name, ops, expected) => {
     expect(checkBoard(build(ops)).map((i) => `${i.kind}:${i.ids.join(",")}`)).toEqual(expected);
   });

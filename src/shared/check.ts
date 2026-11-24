@@ -452,9 +452,15 @@ function summaryIssues(doc: Doc): Found[] {
   for (const c of doc.elements) {
     if (c.type !== "container") continue;
     const members = membersOf(doc.elements, c);
-    // 帯は、セクションの外に置く。中に置いたときの並び方と押し下げは、決めていない
-    for (const m of members) {
-      if (m.type === "summary") issues.push({ kind: "summary-in-section", ids: [m.id, c.id], message: `まとめの帯 ${m.id} が、セクション ${c.id} の中にある。帯は、セクションの外に置く（x・y を set で書く）` });
+    // 帯は、セクションの外に置く。帯はセクションの中身にならない（model.ts の insideOf）ので、中身でなく、帯の中心が枠の中にあるかで見る。
+    // 帯が枠の辺にかかるだけなら、on-section-edge が知らせる
+    const cb = boxOf(c);
+    for (const band of doc.elements) {
+      const bb = band.type === "summary" ? boxOf(band) : null;
+      const cx = bb ? bb.x + bb.w / 2 : 0;
+      const cy = bb ? bb.y + bb.h / 2 : 0;
+      if (!cb || !bb || cx < cb.x || cx > cb.x + cb.w || cy < cb.y || cy > cb.y + cb.h) continue;
+      issues.push({ kind: "summary-in-section", ids: [band.id, c.id], message: `まとめの帯 ${band.id} が、セクション ${c.id} の中にある。帯はセクションの中身にならず、セクションと一緒に動かない。帯をセクションの外に置く（帯の x・y か、セクションの x・y を set で書く）` });
     }
     // 手で写したまとめ。固定したセクションに、同じ状態の付箋が 2 枚以上並ぶ形だけを拾う
     // WHY 狭く拾う: 固定したセクションは、まとめのほかにも使う（凡例、注意書き）。状態のそろった付箋が並ぶのは、まとめだけ
@@ -575,10 +581,12 @@ function findIssues(doc: Doc, ctx: CheckContext): Found[] {
       const right = s.box.x + s.box.w - (m.box.x + m.box.w);
       const bottom = s.box.y + s.box.h - (m.box.y + m.box.h);
       const out = Math.max(-left, -top, -right, -bottom);
+      const cx = m.box.x + m.box.w / 2;
+      const cy = m.box.y + m.box.h / 2;
+      const member = cx >= s.box.x && cx <= s.box.x + s.box.w && cy >= s.box.y && cy <= s.box.y + s.box.h;
+      // 中心が枠の中にある帯は、中身でない（model.ts の insideOf）ので、はみ出しや余白は見ない。summary-in-section が知らせる
+      if (member && m.el.type === "summary") continue;
       if (out > TOLERANCE) {
-        const cx = m.box.x + m.box.w / 2;
-        const cy = m.box.y + m.box.h / 2;
-        const member = cx >= s.box.x && cx <= s.box.x + s.box.w && cy >= s.box.y && cy <= s.box.y + s.box.h;
         if (member) issues.push({ kind: "outside-section", ids: [m.el.id, s.el.id], message: `${m.el.id} が${sectionName(s.el)}から ${round(out)} はみ出している`, px: round(out) });
         else issues.push({ kind: "on-section-edge", ids: [m.el.id, s.el.id], message: `${m.el.id} が${sectionName(s.el)}の枠に ${round(Math.min(hit.w, hit.h))} かかっている${s.el.frame === "none" ? "。透明な枠は見えないので、画面では気づけない。枠の外へ出すか、枠を広げる" : ""}`, px: round(Math.min(hit.w, hit.h)) });
         continue;

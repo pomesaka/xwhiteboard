@@ -892,3 +892,28 @@ describe("セクションを指すピンには、セクションと中身が届�
     expect(p.ok && p.value.elements.map((e) => e.id)).toEqual(ids);
   });
 });
+
+describe("まとめの帯は、セクションの中身にならない", () => {
+  // 帯は件数で背が伸びる。中心がセクションの枠に入っても、セクションと一緒に動かさない
+  const open = Array.from({ length: 10 }, (_, i) => ({ op: "add", el: { id: `n${i}`, type: "shape", x: 5000, y: i * 200, text: `未決${i}`, status: "open" } }));
+  const withBand = (extra: Record<string, unknown>): Doc => {
+    const doc = build([...open, { op: "add", el: { id: "sum", type: "summary", x: 1080, y: 0, show: "open" } }]);
+    // 帯の中心（1320, 225）が枠に入る場所にセクションを置く（人が画面で置いた、など）
+    return { ...doc, elements: [...doc.elements, { id: "sec", type: "container", x: 820, y: 100, w: 760, h: 600, ...extra }] };
+  };
+  test.each([
+    ["列で並べるセクション", { cols: 3 }],
+    ["自由に置くセクション", {}],
+    ["透明な枠", { frame: "none" }],
+  ])("セクションを set で動かしても、帯は動かない: %s", (_name, extra) => {
+    const r = applyOps(withBand(extra), [{ op: "set", id: "sec", patch: { y: 1000 } }]);
+    if (!r.ok) throw new Error(r.error);
+    expect([find(r.value.doc, "sum")?.x, find(r.value.doc, "sum")?.y, find(r.value.doc, "sec")?.y]).toEqual([1080, 0, 1000]);
+  });
+
+  test("中身の一覧に入らない", () => {
+    const doc = withBand({});
+    const sec = find(doc, "sec");
+    expect(sec && membersOf(doc.elements, sec).map((e) => e.id)).toEqual([]);
+  });
+});

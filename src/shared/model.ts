@@ -867,13 +867,18 @@ function centerIn(b: Box, c: Box): boolean {
   return cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h;
 }
 
-/** 中心がセクションの枠の中にある要素の全部。中身（membersOf）に加えて、中のセクションと、端を座標で書いた矢印も入る */
+/**
+ * 中心がセクションの枠の中にある要素の全部。中身（membersOf）に加えて、中のセクションと、端を座標で書いた矢印も入る。
+ * まとめの帯は入れない。帯はボードの上段に置くもので、セクションの中身にしない。
+ * WHY: 帯は件数で背が伸びる。中心がセクションに入ると、セクションを動かしたときに連れていかれ、列に並べ直される
+ * （重なっていることは、check の summary-in-section が知らせる）
+ */
 function insideOf(els: Iterable<El>, container: El): El[] {
   const c = boxOf(container);
   if (!c) return [];
   const out: El[] = [];
   for (const el of els) {
-    const b = el.id === container.id ? null : boxOf(el);
+    const b = el.id === container.id || el.type === "summary" ? null : boxOf(el);
     if (b && centerIn(b, c)) out.push(el);
   }
   return out;
